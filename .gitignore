@@ -110,3 +110,4 @@ syntax: regexp
 
 .pkgdir/
 Module.symvers.tmp
+.cache.mk

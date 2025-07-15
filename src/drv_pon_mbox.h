@@ -257,6 +257,8 @@
 #define PON_MBOX_HW_VER_URX_A_TYPE	8
 /* The HW version of the PON IP used in URX800 mailbox type B */
 #define PON_MBOX_HW_VER_URX_B_TYPE	9
+/* The HW version of the PON IP used in URX800 mailbox type C */
+#define PON_MBOX_HW_VER_URX_C_TYPE	10
 
 /* PON IP Hardware Identifier. */
 #define  PON_MBOX_FUSE0_ID_MASK		0x00ffff00
@@ -458,10 +460,6 @@ struct pon_mbox_pending {
 struct pon_lt_cfg {
 	/** Loop timing config received and valid */
 	bool valid;
-	/** True if loop timing should be done in the driver */
-	bool in_drv;
-	/** True if FW message should be send after doing loop timing */
-	bool fw_msg;
 	/** Loop Timing Power Save mode enable */
 	bool loop_ps_en;
 };
@@ -494,9 +492,10 @@ struct pon_serdes_cfg {
 struct pon_mbox;
 
 /** Internal data structure containing SoC specific
- *  function pointers for SerDes, clk and PLL initialization.
+ *  function pointers and data
+ *  for SerDes, clk and PLL initialization.
  */
-struct pon_soc_func {
+struct pon_soc_data {
 	/** Function to perform PON shell init settings */
 	int (*pon_shell_init)(struct pon_mbox *pon);
 	/** Function to perform basic SerDes settings */
@@ -507,10 +506,14 @@ struct pon_soc_func {
 	int (*pll5_init)(struct pon_mbox *pon);
 	/** Function to perform the SerDes initialization */
 	int (*serdes_init)(struct pon_mbox *pon);
-	/** Function to perform looptiming in SW */
-	int (*sw_loop_timing)(struct pon_mbox *pon);
-	/** Function to reset SW looptiming settings after LOS */
-	int (*sw_loop_timing_los)(struct pon_mbox *pon);
+	/** Use this as hardcoded fake version
+	 *  in case the device cannot identify (e.g. unfused)
+	 */
+	int hw_version_override;
+	/** Specify here a specific/alternate HW version
+	 *  to indicate to the FW via PONFW_HW_VERSION_CMD_ID message
+	 */
+	int hw_version_firmware;
 };
 
 struct pon_sfp_priv;
@@ -594,8 +597,6 @@ struct pon_mbox {
 	struct pon_lt_cfg lt_cfg;
 	/** True if the WAN XPCS was already put into reset */
 	bool reset_xpcs_done;
-	/* This blocks the loop timing function */
-	struct mutex loop_mutex;
 	/** Next mailbox sequence number to use */
 	int next_seq;
 	/** The pending FW messages which were send, but no answer received yet.
@@ -625,8 +626,8 @@ struct pon_mbox {
 	struct mutex biterror_lock;
 	/** Reference to bit error polling thread */
 	struct task_struct *biterror_count_thread;
-	/** SoC specific function pointer */
-	const struct pon_soc_func *soc_func;
+	/** SoC specific function pointers and data */
+	const struct pon_soc_data *soc_spec;
 	/** SerDes configuration */
 	struct pon_serdes_cfg serdes_cfg;
 	/** Indication whether to download SerDes FW */

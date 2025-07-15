@@ -509,6 +509,17 @@ int urx800_ref_clk_sel(struct pon_mbox *pon);
 int urx800_pll5_init(struct pon_mbox *pon);
 
 /**
+ * @brief PLL5 initialization for LGM-C chipset.
+ *	  Configures the LOOP PLL for initial Serdes
+ *	  refclk with fix XTAL timing
+ *
+ * @param in pointer to mailbox structure
+ *
+ * @return 0 on success, -ENODEV on missing resource
+ */
+int urx800c_pll5_init(struct pon_mbox *pon);
+
+/**
  * @brief Serdes initialization for URX chipset family.
  *	  Configures static Serdes settings
  *
@@ -517,28 +528,6 @@ int urx800_pll5_init(struct pon_mbox *pon);
  * @return 0 on success, -ENODEV on missing resource
  */
 int urx800_serdes_init(struct pon_mbox *pon);
-
-/**
- * @brief SW loop timing for URX chipset family.
- *	  Resetting of loop timing related parameters
- *	  after LOS.
- *
- * @param in pointer to mailbox structure
- *
- * @return 0 on success, -ENODEV on missing resource
- */
-int urx800_sw_loop_timing_los(struct pon_mbox *pon);
-
-/**
- * @brief SW loop timing for URX chipset family.
- *	  Perform loop timing in SW instead of FW.
- *	  PRBS is not supported.
- *
- * @param in pointer to mailbox structure
- *
- * @return 0 on success, -ENODEV on missing resource
- */
-int urx800_sw_loop_timing(struct pon_mbox *pon);
 
 /**
  * @brief Basic Serdes initalizatin for PRX chipset family.

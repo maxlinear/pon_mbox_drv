@@ -147,7 +147,7 @@ TEST_F(CountersAutoupdate, pon_mbox_cnt_autoupdate_update_multiple_calls_ngpon2)
 	cmds[PONFW_XGTC_PLOAM_US_COUNTERS_CMD_ID] = 0;
 	cmds[PONFW_GTC_PLOAM_US_COUNTERS_CMD_ID] = 0;
 	cmds[PONFW_TWDM_LODS_COUNTERS_CMD_ID] = 0;
-	cmds[PONFW_ONU_OPTIC_PL_COUNTERS_CMD_ID] = 0;
+	cmds[PONFW_TWDM_ONU_OPTIC_PL_COUNTERS_CMD_ID] = 0;
 
 
 	mocks::state.mock_pon_mbox_send.set_function_handler([&] (auto cmd, auto a, auto b, auto c, auto d, auto e) {
@@ -172,7 +172,7 @@ TEST_F(CountersAutoupdate, pon_mbox_cnt_autoupdate_update_multiple_calls_ngpon2)
 	ASSERT_EQ(cmds[PONFW_GTC_COUNTERS_CMD_ID], 1u);
 	ASSERT_EQ(cmds[PONFW_TWDM_TC_COUNTERS_CMD_ID], 1u);
 	ASSERT_EQ(cmds[PONFW_TWDM_LODS_COUNTERS_CMD_ID], 1u);
-	ASSERT_EQ(cmds[PONFW_ONU_OPTIC_PL_COUNTERS_CMD_ID], 1u);
+	ASSERT_EQ(cmds[PONFW_TWDM_ONU_OPTIC_PL_COUNTERSS_CMD_ID], 1u);
 	ASSERT_EQ(cmds[PONFW_XGTC_PLOAM_DS_COUNTERS_CMD_ID], 1u);
 	ASSERT_EQ(cmds[PONFW_XGTC_PLOAM_US_COUNTERS_CMD_ID], 1u);
 	ASSERT_EQ(cmds[PONFW_GTC_PLOAM_US_COUNTERS_CMD_ID], 0u);

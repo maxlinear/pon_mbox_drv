@@ -210,18 +210,48 @@ static struct ltq_pon_net_hw *g_hw;
 
 static int ltq_pon_net_gem_disconnect(struct ltq_pon_net_gem *gem,
 				      struct ltq_pon_net_tcont *tcont);
-static int ltq_pon_net_pmapper_gem_remove(struct ltq_pon_net_pmapper *pmapper,
-					  int idx);
+static int enhanced_pmapper_gem_remove(bool force_update,
+				       struct ltq_pon_net_pmapper *pmapper,
+				       int idx);
+static int enhanced_pmapper_gem_add(bool force_update,
+				    struct ltq_pon_net_pmapper *pmapper,
+				    int idx,
+				    struct ltq_pon_net_gem *gem);
 static int ltq_pon_net_dp_gem_update(struct ltq_pon_net_gem *gem,
 				     struct net_device *master);
 static void ltq_pon_net_tcont_gems_activate(struct ltq_pon_net_tcont *tcont);
 
+static struct ltq_pon_net_pmapper*
+pmapper_next(struct ltq_pon_net_pmapper *p_mapper, u8 gem_idx);
+
+/* "partial application" functions with force_update parameter to functions:
+ *  enhanced_pmapper_gem_remove,
+ *  enhanced_pmapper_gem_add
+ * "frozen"
+ */
+#define pmapper_gem_remove(pmapper, pcp) \
+	enhanced_pmapper_gem_remove(false, pmapper, pcp)
+
+#define pmapper_gem_remove_ext(pmapper, pcp) \
+	enhanced_pmapper_gem_remove(true, pmapper, pcp)
+
+#define pmapper_gem_add(pmapper, pcp, gem) \
+	enhanced_pmapper_gem_add(false, pmapper, pcp, gem)
+
+#define pmapper_gem_add_ext(pmapper, pcp, gem) \
+	enhanced_pmapper_gem_add(true, pmapper, pcp, gem)
+
 /** The hardware interface open callback.
  * This interface does not support traffic and is only used for management.
  */
-int ltq_pon_net_mdev_open(struct net_device *hw_ndev)
+static int ltq_pon_net_mdev_open(struct net_device *hw_ndev)
 {
-	return -EBUSY;
+	return 0;
+}
+
+static int ltq_pon_net_mdev_stop(struct net_device *hw_ndev)
+{
+	return 0;
 }
 
 /** The hardware interface transmit callback.
@@ -479,6 +509,7 @@ static const struct ethtool_ops mdev_ethtool_ops = {
  */
 static const struct net_device_ops ltq_pon_net_mdev_ops = {
 	.ndo_open		= ltq_pon_net_mdev_open,
+	.ndo_stop		= ltq_pon_net_mdev_stop,
 	.ndo_start_xmit		= ltq_pon_net_mdev_start_xmit,
 #if IS_ENABLED(CONFIG_QOS_TC)
 	.ndo_setup_tc		= ltq_pon_net_mdev_setup_tc,
@@ -618,7 +649,7 @@ static void ltq_pon_net_gem_uninit(struct net_device *gem_ndev)
 	if (pmapper) {
 		for (i = 0; i < DP_PMAP_PCP_NUM; i++) {
 			if (pmapper->gem[i] == gem)
-				ltq_pon_net_pmapper_gem_remove(pmapper, i);
+				pmapper_gem_remove(pmapper, i);
 		}
 	}
 
@@ -640,6 +671,11 @@ static netdev_tx_t ltq_pon_net_gem_start_xmit(struct sk_buff *skb,
 	unsigned int len = skb->len;
 	const struct ethhdr *eth = eth_hdr(skb);
 
+	if (!atomic_read(&g_hw->in_o5)) {
+		gem->stats.tx_dropped++;
+		dev_kfree_skb(skb);
+		return NETDEV_TX_OK;
+	}
 	/* OMCI GEM and trying to send packet with wrong protocol?
 	 * We cannot use skb->protocol here, as this is not set for raw sockets,
 	 * which are used for the OMCI communication.
@@ -994,21 +1030,102 @@ static int ltq_pon_net_pmapper_stop(struct net_device *pmapper_ndev)
 	return 0;
 }
 
+/* transfers gem and its ownership (from DPM's point of view), residing in
+ * p-mapper's PCP slot pcp of originating (src) p-mapper to destination (dst)
+ * p-mapper.
+ */
+static void transfer_gem(struct ltq_pon_net_pmapper *src,
+			 struct ltq_pon_net_pmapper *dst,
+			 struct ltq_pon_net_gem *gem,
+			 int pcp)
+{
+	/* Remove shared gem from selected pcp slot of src p-mapper. Call to
+	 * ltq_pon_net_dp_gem_update is forced by use of the ext variant of
+	 * the remove function. Thus this shall remove gem from DPM's point
+	 * of view.
+	 */
+	pmapper_gem_remove_ext(src, pcp);
+
+	/* Free up selected pcp slot with the dst p-mapper. Since the dst
+	 * p-mapper is NOT the master of shared gem from DPM's point of view,
+	 * the plain remove is used which implies no call to
+	 * ltq_pon_net_dp_gem_update inside of it.
+	 */
+	pmapper_gem_remove(dst, pcp);
+
+	/* Finally transfer ownership of shared gem to the dst p-mapper. Use
+	 * the ext variant which forces call to ltq_pon_net_dp_gem_update and
+	 * thus from DPM's point of view the dst p-mapper is from now on its
+	 * new master.
+	 */
+	pmapper_gem_add_ext(dst, pcp, gem);
+
+	/* since the removals above reduced gem's refcount by 2 and the add
+	 * above did NOT increase it at all, it is explicitly done below just
+	 * to keep the balance correct.
+	 */
+	dev_hold(gem->ndev);
+}
+
 static void ltq_pon_net_pmapper_uninit(struct net_device *pmapper_ndev)
 {
 	struct ltq_pon_net_pmapper *pmapper = netdev_priv(pmapper_ndev);
 	struct ltq_pon_net_hw *hw = pmapper->hw;
-	int i;
+	int pcp;
+	struct ltq_pon_net_gem *gem;
+	struct ltq_pon_net_pmapper *next_pmapper;
 
 	/* As a workaround do the deregistration from the datapath library
 	 * here and not in the dellink callback, because uninit is called
 	 * after all the tc callbacks to clean up the queue were done.
 	 */
-	for (i = 0; i < DP_PMAP_PCP_NUM; i++) {
-		if (pmapper->gem[i])
-			ltq_pon_net_pmapper_gem_remove(pmapper, i);
+	for (pcp = 0; pcp < DP_PMAP_PCP_NUM; pcp++) {
+		gem = pmapper->gem[pcp];
+		if (!gem)
+			continue;
+		/* Is this pmapper master to this gem
+		 * currently (from DPM's point of view)?
+		 */
+		if (gem->dp_ndev == pmapper_ndev) {
+			/* Find next pmapper if any which references the
+			 * same gem idx.
+			 */
+			next_pmapper = pmapper_next(pmapper,
+						    gem->gem_idx);
+			if (next_pmapper) {
+				/* This gem_idx is shared across several
+				 * p-mapperS (since next_pmapper is NOT
+				 * a NULL pointer!).
+				 */
+				transfer_gem(pmapper,
+					     next_pmapper,
+					     gem,
+					     pcp);
+			} else {
+				/* only this p-mapper references the gem. gem
+				 * is NOT shared! Both variants of the remove
+				 * could be used here as the gem is not shared
+				 * across several p-mappers, BUT it could be
+				 * that it is shared among several pcp slots of
+				 * the p-mapper being destructed (the case
+				 * where different PCPs sink into the same gem)
+				 * which is perfectly normal scenario, and
+				 * thus the plain remove has to be used as it
+				 * will call to ltq_pon_net_dp_gem_update only
+				 * when a single PCP slot references it.
+				 */
+				pmapper_gem_remove(pmapper,
+						   pcp);
+			}
+		} else {
+			/* the p-mapper is not gem's master from DPM's
+			 * point of view, but it has to be removed from
+			 * p-mapper's PCP slots.
+			 */
+			pmapper_gem_remove(pmapper,
+					   pcp);
+		}
 	}
-
 	/* Remove the IEEE 802.1p mapper from the PON IP hardware interface. */
 	list_del(&pmapper->node);
 
@@ -1088,8 +1205,15 @@ ltq_pon_net_pmapper_start_xmit(struct sk_buff *skb,
 	unsigned int len = skb->len;
 	dp_subif_t dp_subif;
 
+	if (!atomic_read(&g_hw->in_o5)) {
+		pmapper->stats.tx_dropped++;
+		dev_kfree_skb(skb);
+		return NETDEV_TX_OK;
+	}
+
 	if (skb_put_padto(skb, ETH_ZLEN)) {
 		pmapper->stats.tx_dropped++;
+		dev_kfree_skb(skb);
 		return NETDEV_TX_OK;
 	}
 
@@ -1419,6 +1543,7 @@ static int ltq_pon_net_probe(struct platform_device *pdev)
 	struct net_device *hw_ndev;
 	const struct ltq_pon_net_soc_data *soc_data = NULL;
 	enum pon_mode mode;
+	const char *altname = NULL;
 	int ret;
 
 	soc_data = of_device_get_match_data(dev);
@@ -1444,6 +1569,7 @@ static int ltq_pon_net_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&hw->gem_list);
 	INIT_LIST_HEAD(&hw->iphost_list);
 	spin_lock_init(&hw->iphost_lock);
+	atomic_set(&hw->in_o5, 0);
 
 	/* Do not use platform_get_resource() because reg is not a real
 	 * address on the bus, but an identifier in some hardware.
@@ -1461,25 +1587,36 @@ static int ltq_pon_net_probe(struct platform_device *pdev)
 	 * A mismatch will result in a not working interface.
 	 */
 	hw->dp_flags.with_rx_fcs =
+		of_property_read_bool(of_node, "mxl,with-rx-fcs") ||
 		of_property_read_bool(of_node, "intel,with-rx-fcs");
 	hw->dp_flags.with_tx_fcs =
+		of_property_read_bool(of_node, "mxl,with-tx-fcs") ||
 		of_property_read_bool(of_node, "intel,with-tx-fcs");
 	dev_dbg(hw->dev, "rx_fcs: %s tx_fcs: %s\n",
 		hw->dp_flags.with_rx_fcs ? "yes" : "no",
 		hw->dp_flags.with_tx_fcs ? "yes" : "no");
 	pon_mbox_save_pon_dp_flags(&hw->dp_flags);
 
-	ret = of_property_read_u32(of_node, "intel,max_ctps", &hw->max_ctps);
+	ret = of_property_read_u32(of_node, "mxl,max_ctps", &hw->max_ctps);
+	if (ret)
+		ret = of_property_read_u32(of_node, "intel,max_ctps",
+					   &hw->max_ctps);
 	if (ret) {
 		dev_dbg(hw->dev, "can not get <max_ctps> property: %i\n", ret);
 		hw->max_ctps = 0;
 	}
 
-	ret = of_property_read_u32(of_node, "intel,max_gpid", &hw->max_gpid);
+	ret = of_property_read_u32(of_node, "mxl,max_gpid", &hw->max_gpid);
+	if (ret)
+		ret = of_property_read_u32(of_node, "intel,max_gpid",
+					   &hw->max_gpid);
 	if (ret) {
 		dev_dbg(hw->dev, "can not get <max_gpid> property: %i\n", ret);
 		hw->max_gpid = 0;
 	}
+
+	/* Optional, if it fails the pointer is still NULL */
+	(void)of_property_read_string(of_node, "intel,altname", &altname);
 
 	hw->dp_mode_registered = 0;
 
@@ -1497,6 +1634,13 @@ static int ltq_pon_net_probe(struct platform_device *pdev)
 		dev_err(dev, "Cannot register net device\n");
 		free_netdev(hw_ndev);
 		return ret;
+	}
+
+	if (altname) {
+		ret = netdev_name_node_alt_create(hw_ndev, altname);
+		if (ret)
+			dev_err(dev, "Cannot set altname '%s', error %d\n",
+				altname, ret);
 	}
 
 	platform_set_drvdata(pdev, hw);
@@ -1524,6 +1668,8 @@ static int ltq_pon_net_probe(struct platform_device *pdev)
 
 	/* Store PON netdevice private data structure for event usage */
 	g_hw = hw;
+
+	netif_carrier_off(hw_ndev);
 
 	return 0;
 }
@@ -1912,7 +2058,7 @@ static int ltq_pon_net_gem_fw_apply(struct ltq_pon_net_gem *gem,
 	/* Warmstart: if system is not in operational state we can only
 	 * pretend to configure GEM with pre-assigned index.
 	 */
-	if (!g_hw->in_o5) {
+	if (!atomic_read(&g_hw->in_o5)) {
 		err = ltq_pon_net_gem_idx_preassign(gem);
 		return err;
 	}
@@ -2208,7 +2354,7 @@ static void ltq_pon_net_gem_delete(struct ltq_pon_net_gem *gem)
 	if (gem->gem_traffic_type == PONFW_GEM_PORT_ID_TT_OMCI)
 		return;
 
-	if (!g_hw->in_o5)
+	if (!atomic_read(&g_hw->in_o5))
 		return;
 
 	fw_gem_input.gem_port_id = gem->gem_id;
@@ -2419,8 +2565,6 @@ static int ltq_pon_net_gem_valid_id(struct net_device *ndev, u32 gem_id)
 
 	switch (mode) {
 	case PON_MODE_984_GPON:
-	case PON_MODE_989_NGPON2_2G5:
-	case PON_MODE_989_NGPON2_10G:
 		if (gem_id > 4095) {
 			netdev_err(ndev, "id (%i) not in valid range [0 ... 4095]\n",
 				   gem_id);
@@ -2428,7 +2572,15 @@ static int ltq_pon_net_gem_valid_id(struct net_device *ndev, u32 gem_id)
 		}
 		return 0;
 	case PON_MODE_987_XGPON:
+		if (gem_id < 1023 || gem_id > 65534) {
+			netdev_err(ndev, "id (%i) not in valid range [1023 ... 65534]\n",
+				   gem_id);
+			return -EINVAL;
+		}
+		return 0;
 	case PON_MODE_9807_XGSPON:
+	case PON_MODE_989_NGPON2_2G5:
+	case PON_MODE_989_NGPON2_10G:
 		if (gem_id < 1021 || gem_id > 65534) {
 			netdev_err(ndev, "id (%i) not in valid range [1021 ... 65534]\n",
 				   gem_id);
@@ -2591,7 +2743,11 @@ static int ltq_pon_net_gem_newlink(struct net *src_net,
 
 	list_add(&gem->node, &hw->gem_list);
 
-	netif_carrier_on(gem_ndev);
+	if (!atomic_read(&hw->in_o5))
+		netif_carrier_off(gem_ndev);
+	else
+		netif_carrier_on(gem_ndev);
+
 	return 0;
 
 err_gem_unlink:
@@ -3095,7 +3251,7 @@ static void ltq_pon_net_qos_idx_unlink(struct net_device *tcont_ndev,
 	/* We should only flush queues if we not in operational state
 	 * as it would cause issues with traffic on operating T-CONTs.
 	 */
-	if (!g_hw->in_o5) {
+	if (!atomic_read(&g_hw->in_o5)) {
 		ltq_pon_net_qos_idx_flush(tcont);
 	} else {
 		/* We should send a unlink message to the PON FW only when this
@@ -3130,8 +3286,6 @@ static int ltq_pon_net_tcont_valid_id(struct net_device *ndev, u32 alloc_id)
 
 	switch (mode) {
 	case PON_MODE_984_GPON:
-	case PON_MODE_989_NGPON2_2G5:
-	case PON_MODE_989_NGPON2_10G:
 		if (alloc_id < 256 || alloc_id > 4095) {
 			netdev_err(ndev, "id (%i) not in valid range [256 ... 4095]\n",
 				   alloc_id);
@@ -3140,6 +3294,8 @@ static int ltq_pon_net_tcont_valid_id(struct net_device *ndev, u32 alloc_id)
 		return 0;
 	case PON_MODE_987_XGPON:
 	case PON_MODE_9807_XGSPON:
+	case PON_MODE_989_NGPON2_2G5:
+	case PON_MODE_989_NGPON2_10G:
 		if (alloc_id < 1024 || alloc_id > 16383) {
 			netdev_err(ndev, "id (%i) not in valid range [1024 ... 16383]\n",
 				   alloc_id);
@@ -3637,14 +3793,54 @@ static void ltq_pon_net_pmapper_setup(struct net_device *pmapper_ndev)
 	INIT_LIST_HEAD(&pmapper->node);
 }
 
-static struct ltq_pon_net_gem *
-ltq_pon_net_pmapper_gem_find(struct ltq_pon_net_pmapper *pmapper, u8 gem_idx)
+/* attempts to find a p-mapper which references given gem_idx if any.
+ * given p-mapper (p_mapper) is excluded from the scan.
+ */
+struct ltq_pon_net_pmapper*
+pmapper_next(struct ltq_pon_net_pmapper *p_mapper, u8 gem_idx)
 {
-	int i;
+	/* a cursor p-mapper, used to iterate over p-mapperS */
+	struct ltq_pon_net_pmapper *pmapper;
+	int pcp;
 
-	for (i = 0; i < DP_PMAP_PCP_NUM; i++) {
-		if (pmapper->gem[i] && pmapper->gem[i]->gem_idx == gem_idx)
-			return pmapper->gem[i];
+	/* iterate over existing p-mapperS to find the
+	 * next one if any which references the given
+	 * GEM Port-IDX (=gem_idx).
+	 */
+	list_for_each_entry(pmapper, &p_mapper->hw->pmapper_list, node) {
+		if (p_mapper == pmapper)
+			continue;
+		for (pcp = 0; pcp < DP_PMAP_PCP_NUM; pcp++) {
+			if (!pmapper->gem[pcp])
+				continue;
+			if (pmapper->gem[pcp]->gem_idx == gem_idx)
+				return pmapper;
+		}
+	}
+
+	return NULL;
+}
+
+static struct ltq_pon_net_gem *
+ltq_pon_net_pmapper_gem_find(struct ltq_pon_net_pmapper *p_mapper, u8 gem_idx)
+{
+	/* a cursor p-mapper, used to iterate over p-mapperS */
+	struct ltq_pon_net_pmapper *pmapper;
+
+	/* iterate over existing p-mapperS to figure out
+	 * whether any of them reference the given
+	 * GEM Port-IDX (=gem_idx).
+	 */
+	list_for_each_entry(pmapper, &p_mapper->hw->pmapper_list, node) {
+		int i;
+
+		for (i = 0; i < DP_PMAP_PCP_NUM; i++) {
+			if (!pmapper->gem[i])
+				continue;
+
+			if (pmapper->gem[i]->gem_idx == gem_idx)
+				return pmapper->gem[i];
+		}
 	}
 
 	return NULL;
@@ -3691,8 +3887,10 @@ static int ltq_pon_net_dp_gem_update(struct ltq_pon_net_gem *gem,
 	return 0;
 }
 
-static int ltq_pon_net_pmapper_gem_add(struct ltq_pon_net_pmapper *pmapper,
-				       int idx, struct ltq_pon_net_gem *gem)
+static int enhanced_pmapper_gem_add(bool force_update,
+				    struct ltq_pon_net_pmapper *pmapper,
+				    int idx,
+				    struct ltq_pon_net_gem *gem)
 {
 	int err;
 
@@ -3705,10 +3903,12 @@ static int ltq_pon_net_pmapper_gem_add(struct ltq_pon_net_pmapper *pmapper,
 	if (WARN_ON(!gem))
 		return -ENODEV;
 
-	/* Register only the first GEM port from the DP library */
-	if (ltq_pon_net_pmapper_gem_find(pmapper, gem->gem_idx)) {
-		pmapper->gem[idx] = gem;
-		return 0;
+	if (!force_update) {
+		/* Register only the first GEM port from the DP library */
+		if (ltq_pon_net_pmapper_gem_find(pmapper, gem->gem_idx)) {
+			pmapper->gem[idx] = gem;
+			return 0;
+		}
 	}
 
 	pmapper->gem[idx] = gem;
@@ -3721,8 +3921,9 @@ static int ltq_pon_net_pmapper_gem_add(struct ltq_pon_net_pmapper *pmapper,
 	return 0;
 }
 
-static int ltq_pon_net_pmapper_gem_remove(struct ltq_pon_net_pmapper *pmapper,
-					  int idx)
+static int enhanced_pmapper_gem_remove(bool force_update,
+				       struct ltq_pon_net_pmapper *pmapper,
+				       int idx)
 {
 	struct ltq_pon_net_gem *gem;
 	int err;
@@ -3737,9 +3938,11 @@ static int ltq_pon_net_pmapper_gem_remove(struct ltq_pon_net_pmapper *pmapper,
 	pmapper->gem[idx] = NULL;
 	dev_put(gem->ndev);
 
-	/* Deregister only the last GEM port from the DP library */
-	if (ltq_pon_net_pmapper_gem_find(pmapper, gem->gem_idx))
-		return 0;
+	if (!force_update) {
+		/* Deregister only the last GEM port from the DP library */
+		if (ltq_pon_net_pmapper_gem_find(pmapper, gem->gem_idx))
+			return 0;
+	}
 
 	err = ltq_pon_net_dp_gem_update(gem, NULL);
 	if (err)
@@ -3834,8 +4037,7 @@ static int ltq_pon_net_pmapper_changelink(struct net_device *pmapper_ndev,
 			if (netdev_ops->ndo_open != &ltq_pon_net_gem_open) {
 				dev_put(gem_ndev);
 				netdev_err(pmapper_ndev, "Added interface (%s) is not a GEM\n",
-						gem_ndev ?
-						netdev_name(gem_ndev) : NULL);
+					   netdev_name(gem_ndev));
 				return -ENODEV;
 			}
 			gem = netdev_priv(gem_ndev);
@@ -3848,12 +4050,12 @@ static int ltq_pon_net_pmapper_changelink(struct net_device *pmapper_ndev,
 		}
 
 		if (pmapper->gem[i]) {
-			err = ltq_pon_net_pmapper_gem_remove(pmapper, i);
+			err = pmapper_gem_remove(pmapper, i);
 			if (err)
 				return err;
 		}
 		if (gem_ndev_idx) {
-			err = ltq_pon_net_pmapper_gem_add(pmapper, i, gem);
+			err = pmapper_gem_add(pmapper, i, gem);
 			if (err)
 				return err;
 		}
@@ -4240,6 +4442,7 @@ static void ltq_pon_net_ploam_state_event(char *msg, size_t msg_len)
 	struct ltq_pon_net_gem *gem;
 	struct list_head *ele;
 	bool in_o5;
+	struct net_device *pon0;
 
 	if (msg_len != sizeof(*ploam)) {
 		pr_err("PLOAM state event: wrong message size!\n");
@@ -4251,23 +4454,32 @@ static void ltq_pon_net_ploam_state_event(char *msg, size_t msg_len)
 		return;
 	}
 
+	if (!g_hw->ndev) {
+		pr_err("PLOAM state event: PON master interface net_device not available!\n");
+		return;
+	}
+
+	pon0 = g_hw->ndev;
+
 	rtnl_lock();
 	/* The system is in O50, O51 O52 or O60 */
 	in_o5 = (ploam->ploam_act >= 50 && ploam->ploam_act <= 60);
 
 	/* We dropped out of O5 */
-	if (g_hw->in_o5 && !in_o5) {
+	if (atomic_read(&g_hw->in_o5) && !in_o5) {
+		netif_carrier_off(pon0);
 		list_for_each(ele, &g_hw->gem_list) {
 			gem = list_entry(ele, struct ltq_pon_net_gem, node);
 			gem->valid = false;
 			netif_carrier_off(gem->ndev);
 		}
-		g_hw->in_o5 = in_o5;
+		atomic_set(&g_hw->in_o5, in_o5);
 	}
 
 	/* We just entered O5 */
-	if (!g_hw->in_o5 && in_o5) {
-		g_hw->in_o5 = in_o5;
+	if (!atomic_read(&g_hw->in_o5) && in_o5) {
+		atomic_set(&g_hw->in_o5, in_o5);
+		netif_carrier_on(pon0);
 		ltq_pon_net_o5_tconts_activate();
 		ltq_pon_net_o5_gems_activate();
 	}
@@ -4310,7 +4522,9 @@ static const struct ltq_pon_net_soc_data lgm_data = {
 static const struct of_device_id ltq_pon_net_match[] = {
 	{ .compatible = "lantiq,falcon-mountain-pon", .data = &prx300_data },
 	{ .compatible = "intel,prx300-pon", .data = &prx300_data },
+	{ .compatible = "mxl,prx300-pon", .data = &prx300_data },
 	{ .compatible = "intel,lgm-pon", .data = &lgm_data },
+	{ .compatible = "mxl,lgm-pon", .data = &lgm_data },
 	{},
 };
 MODULE_DEVICE_TABLE(of, ltq_pon_net_match);

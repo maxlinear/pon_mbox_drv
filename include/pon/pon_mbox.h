@@ -251,7 +251,7 @@ enum {
 
 enum {
 	PON_MBOX_LT_UNSPEC,
-	PON_MBOX_LT_MODE,
+	PON_MBOX_LT_MODE, /* no longer supported */
 	PON_MBOX_LT_POWER_SAVE,
 };
 

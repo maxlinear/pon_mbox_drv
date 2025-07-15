@@ -121,7 +121,9 @@ static void pon_mbox_serdes_mask(struct pon_mbox *pon, u32 clr, u32 set,
 static const char *pon_mbox_get_serdes_fw_filename(struct pon_mbox *pon)
 {
 
-	if (pon->hw_ver == PON_MBOX_HW_VER_URX_B_TYPE)
+	/* same serdes FW for URX-B and C */
+	if (pon->hw_ver == PON_MBOX_HW_VER_URX_B_TYPE ||
+	    pon->hw_ver == PON_MBOX_HW_VER_URX_C_TYPE)
 		return SRDS_FW_URX800_B;
 	else if (pon->hw_ver == PON_MBOX_HW_VER_URX_A_TYPE)
 		return SRDS_FW_URX800_A;
@@ -252,7 +254,7 @@ int urx800_ref_clk_sel(struct pon_mbox *pon)
 	}
 
 	if (!pon->cgu) {
-		dev_err(pon->dev, "no intel,cgu-syscon phandle\n");
+		dev_err(pon->dev, "cgu-syscon not available\n");
 		return -ENODEV;
 	}
 
@@ -273,7 +275,7 @@ int urx800_ref_clk_sel(struct pon_mbox *pon)
 	return 0;
 }
 
-int urx800_pll5_init(struct pon_mbox *pon)
+static int urx8x_pll5_init(struct pon_mbox *pon, bool frefcmlen)
 {
 	u32 set, clr, val;
 	int ret;
@@ -290,8 +292,10 @@ int urx800_pll5_init(struct pon_mbox *pon)
 		return -EPERM;
 	}
 
-	set = (1 << PON_SHELL_LOOP_PLL_CFG2_REFDIV_SHIFT) |
-		PON_SHELL_LOOP_PLL_CFG2_FREFCMLEN;
+	set = (1 << PON_SHELL_LOOP_PLL_CFG2_REFDIV_SHIFT);
+	/* LGM-A and B require this bit 1, LGM-C inverted */
+	if (frefcmlen)
+		set |= PON_SHELL_LOOP_PLL_CFG2_FREFCMLEN;
 	clr = PON_SHELL_LOOP_PLL_CFG2_FBDIV_MASK |
 		PON_SHELL_LOOP_PLL_CFG2_REFDIV_MASK |
 		PON_SHELL_LOOP_PLL_CFG2_FREFCMLEN;
@@ -378,6 +382,16 @@ int urx800_pll5_init(struct pon_mbox *pon)
 		PON_SHELL_MODE_SEL);
 
 	return 0;
+}
+
+int urx800_pll5_init(struct pon_mbox *pon)
+{
+	return urx8x_pll5_init(pon, true);
+}
+
+int urx800c_pll5_init(struct pon_mbox *pon)
+{
+	return urx8x_pll5_init(pon, false);
 }
 
 #if 0
@@ -874,480 +888,6 @@ int urx800_serdes_init(struct pon_mbox *pon)
 	return 0;
 }
 
-/**
- * SW loop timing state 1
- * Reconfigure SerDes refclk to fix timing.
- */
-static int urx800_lt_state1(struct pon_mbox *pon)
-{
-	int ret;
-	u32 set, clr;
-	u32 val;
-
-	pon_mbox_pon_app_mask(pon, PON_SHELL_GEN_CTRL_RX_DATA_EN,
-		0, PON_SHELL_GEN_CTRL);
-
-	pon_mbox_pon_app_mask(pon, PON_SHELL_GEN_CTRL_REF_CLK_EN,
-		0, PON_SHELL_GEN_CTRL);
-
-	ret = urx800_ref_clk_wait(pon, 0);
-	if (ret)
-		return ret;
-
-	pon_mbox_pon_app_mask(pon, PON_SHELL_MODE_SEL_PON_SHELL_REFCLK_EN,
-		0, PON_SHELL_MODE_SEL);
-
-	clr = PON_SHELL_LOOP_PLL_CFG1_FOUT0EN |
-		PON_SHELL_LOOP_PLL_CFG1_FOUT1EN;
-	pon_mbox_pon_app_mask(pon, clr, 0, PON_SHELL_LOOP_PLL_CFG1);
-
-	pon_mbox_pon_app_mask(pon, PON_SHELL_LOOP_PLL_CFG0_PLLEN,
-		0, PON_SHELL_LOOP_PLL_CFG0);
-
-	clr = PON_SHELL_LOOP_PLL_CFG2_REFDIV_MASK |
-		PON_SHELL_LOOP_PLL_CFG2_FBDIV_MASK |
-		PON_SHELL_LOOP_PLL_CFG2_FREFCMLEN;
-	set = (1 << PON_SHELL_LOOP_PLL_CFG2_REFDIV_SHIFT) |
-		PON_SHELL_LOOP_PLL_CFG2_FREFCMLEN;
-	/* FBDIV */
-	switch (pon->mode) {
-	case PON_MODE_984_GPON:
-	case PON_MODE_987_XGPON:
-	case PON_MODE_9807_XGSPON:
-	case PON_MODE_989_NGPON2_2G5:
-	case PON_MODE_989_NGPON2_10G:
-		if (!pon->lt_cfg.loop_ps_en)
-			set |= 248;
-		else
-			set |= 124;
-		break;
-	default:
-		return -EINVAL;
-	}
-	pon_mbox_pon_app_mask(pon, clr, set, PON_SHELL_LOOP_PLL_CFG2);
-
-	clr = PON_SHELL_LOOP_PLL_CFG0_FRAC_MASK |
-		PON_SHELL_LOOP_PLL_CFG0_DSMEN |
-		PON_SHELL_LOOP_PLL_CFG0_DACEN;
-	switch (pon->mode) {
-	case PON_MODE_984_GPON:
-	case PON_MODE_987_XGPON:
-	case PON_MODE_9807_XGSPON:
-	case PON_MODE_989_NGPON2_2G5:
-	case PON_MODE_989_NGPON2_10G:
-		if (!pon->lt_cfg.loop_ps_en)
-			set = PON_SHELL_LOOP_PLL_CFG0_DSMEN |
-				PON_SHELL_LOOP_PLL_CFG0_DACEN |
-				(0xD4FDF3 <<
-				PON_SHELL_LOOP_PLL_CFG0_FRAC_SHIFT);
-		else
-			set = PON_SHELL_LOOP_PLL_CFG0_DSMEN |
-				PON_SHELL_LOOP_PLL_CFG0_DACEN |
-				(0x6A7EFA <<
-				PON_SHELL_LOOP_PLL_CFG0_FRAC_SHIFT);
-		break;
-	default:
-		return -EINVAL;
-	}
-	pon_mbox_pon_app_mask(pon, clr, set, PON_SHELL_LOOP_PLL_CFG0);
-
-	pon_mbox_pon_app_mask(pon, 0,
-		PON_SHELL_LOOP_PLL_CFG0_PLLEN, PON_SHELL_LOOP_PLL_CFG0);
-
-	ret = readl_poll_timeout(pon->pon_app + PON_SHELL_LOOP_PLL_CFG0,
-		val, val & PON_SHELL_LOOP_PLL_CFG0_LOCK,
-		10, 50000);
-	if (!ret) {
-		dev_dbg(pon->dev,
-			"SW loop timing - pll5 locked successfully (0x%x)\n",
-			val);
-	} else {
-		val = pon_mbox_pon_app_read(pon, PON_SHELL_LOOP_PLL_CFG0);
-		dev_err(pon->dev,
-			"SW loop timing - pll5 not locked: %i (0x%x)\n",
-			ret, val);
-		return ret;
-	}
-
-	set = PON_SHELL_LOOP_PLL_CFG1_FOUT0EN |
-		PON_SHELL_LOOP_PLL_CFG1_FOUT1EN;
-	pon_mbox_pon_app_mask(pon, 0, set, PON_SHELL_LOOP_PLL_CFG1);
-
-	pon_mbox_pon_app_mask(pon, 0, PON_SHELL_MODE_SEL_PON_SHELL_REFCLK_EN,
-		PON_SHELL_MODE_SEL);
-
-	pon_mbox_pon_app_mask(pon, 0, PON_SHELL_GEN_CTRL_REF_CLK_EN,
-		PON_SHELL_GEN_CTRL);
-
-
-
-	return 0;
-}
-
-/**
- * SW loop timing CDR lock check
- * Might be replaced by CGU clock supervision
- */
-static int urx800_lt_cdr_lock(struct pon_mbox *pon)
-{
-	int ret;
-	u32 val;
-
-	/* check RX_VALID bit is asserted - newly introduced */
-	ret = readl_poll_timeout(pon->serdes +
-		PON_PHY_LANE0_DIG_ASIC_RX_OUT_0,
-		val,
-		val & PON_PHY_LANE0_DIG_ASIC_RX_OUT_0_VALID,
-		10, 50000);
-
-	if (!ret) {
-		val = pon_mbox_serdes_read(pon,
-			PON_PHY_LANE0_DIG_ASIC_RX_OUT_0);
-		dev_dbg(pon->dev, "RX_VALID is assered: 0x%x 0x%x\n",
-			PON_PHY_LANE0_DIG_ASIC_RX_OUT_0, val);
-	} else {
-		val = pon_mbox_serdes_read(pon,
-			PON_PHY_LANE0_DIG_ASIC_RX_OUT_0);
-		dev_err(pon->dev, "RX_VALID is not asserted: %i (0x%x)\n",
-			ret, val);
-		return ret;
-	}
-
-	val = pon_mbox_serdes_read(pon, PON_PHY_LANE0_DIG_RX_DPLL_FREQ);
-
-	ret = readl_poll_timeout(pon->serdes +
-		PON_PHY_LANE0_DIG_RX_DPLL_FREQ, val,
-		(val & PON_PHY_LANE0_DIG_RX_DPLL_FREQ_VAL_MASK) > 0x1B58 &&
-		(val & PON_PHY_LANE0_DIG_RX_DPLL_FREQ_VAL_MASK) < 0x2328,
-		10, 50000);
-
-	mdelay(10);
-
-	/* read value again to ensure validity - value might drop */
-	val = pon_mbox_serdes_read(pon, PON_PHY_LANE0_DIG_RX_DPLL_FREQ);
-
-	if ((val > 0x1B58) && (val < 0x2328)) {
-		dev_dbg(pon->dev,
-			"SW loop timing - RX CDR lock successful (0x%x)\n",
-			val);
-	} else {
-		dev_err(pon->dev,
-			"SW loop timing - RX CDR lock failed: %i (0x%x)\n",
-			ret, val);
-		return -EPERM;
-	}
-
-	return 0;
-}
-
-/**
- * SW loop timing state 4
- * SerDes CDR lock.
- */
-static int urx800_lt_state4(struct pon_mbox *pon)
-{
-	int ret;
-	u32 val;
-
-	pon_mbox_pon_app_mask(pon, 0, PON_SHELL_GEN_CTRL_RX_DATA_EN,
-		PON_SHELL_GEN_CTRL);
-
-	ret = urx800_lt_cdr_lock(pon);
-	/* Toggle RX DATA EN bit again in case CDR did not lock successfully */
-	if (ret) {
-		pon_mbox_pon_app_mask(pon, PON_SHELL_GEN_CTRL_RX_DATA_EN, 0,
-			PON_SHELL_GEN_CTRL);
-
-		mdelay(1);
-
-		pon_mbox_pon_app_mask(pon, 0, PON_SHELL_GEN_CTRL_RX_DATA_EN,
-			PON_SHELL_GEN_CTRL);
-
-		ret = urx800_lt_cdr_lock(pon);
-		if (ret)
-			return ret;
-	}
-
-	if (pon->serdes_cfg.param[PON_MBOX_SRDS_RX_ADAPT_EN]) {
-		pon_mbox_pon_app_mask(pon, 0,
-			PON_SHELL_EXT_MISC_CTRL2_RX_ADAPT_REQ,
-			PON_SHELL_EXT_MISC_CTRL2);
-
-		ret = readl_poll_timeout(pon->pon_app +
-			PON_SHELL_EXT_MISC_CTRL2,
-			val, val & PON_SHELL_EXT_MISC_CTRL2_ADAPT_RX_ACK,
-			10, 50000);
-		if (!ret) {
-			dev_dbg(pon->dev,
-				"SW loop timing - RX autoadaptation successful (0x%x)\n",
-				val);
-		} else {
-			val = pon_mbox_pon_app_read(pon,
-				PON_SHELL_EXT_MISC_CTRL2);
-			dev_err(pon->dev,
-				"SW loop timing - RX autoadaptation failed : %i (0x%x)\n",
-				ret, val);
-			return ret;
-		}
-
-		pon_mbox_pon_app_mask(pon,
-			PON_SHELL_EXT_MISC_CTRL2_RX_ADAPT_REQ, 0,
-			PON_SHELL_EXT_MISC_CTRL2);
-	}
-
-	return 0;
-}
-
-/**
- * SW loop timing state 5
- * Switch to loop timing
- */
-static int urx800_lt_state5(struct pon_mbox *pon)
-{
-	int ret;
-	u32 set, clr;
-	u32 val;
-
-	pon_mbox_pon_app_mask(pon, PON_SHELL_GEN_CTRL_REF_CLK_EN, 0,
-		PON_SHELL_GEN_CTRL);
-
-	ret = urx800_ref_clk_wait(pon, 0);
-	if (ret)
-		return ret;
-
-	pon_mbox_pon_app_mask(pon, PON_SHELL_MODE_SEL_PON_SHELL_REFCLK_EN,
-		0, PON_SHELL_MODE_SEL);
-
-	clr = PON_SHELL_LOOP_PLL_CFG1_FOUT0EN |
-		PON_SHELL_LOOP_PLL_CFG1_FOUT1EN |
-		PON_SHELL_LOOP_PLL_CFG1_FOUT2EN |
-		PON_SHELL_LOOP_PLL_CFG1_FOUT3EN |
-		PON_SHELL_LOOP_PLL_CFG1_POST_DIV0PRE;
-	pon_mbox_pon_app_mask(pon, clr, 0, PON_SHELL_LOOP_PLL_CFG1);
-
-	pon_mbox_pon_app_mask(pon, PON_SHELL_LOOP_PLL_CFG0_PLLEN,
-		0, PON_SHELL_LOOP_PLL_CFG0);
-
-	pon_mbox_pon_app_mask(pon, PON_SHELL_LOOP_PLL_CFG2_FREFCMLEN,
-		0, PON_SHELL_LOOP_PLL_CFG2);
-
-	clr = PON_SHELL_LOOP_PLL_CFG2_REFDIV_MASK |
-		PON_SHELL_LOOP_PLL_CFG2_FBDIV_MASK;
-	/* FBDIV and REFDIV */
-	switch (pon->mode) {
-	case PON_MODE_984_GPON:
-		set = (4 << PON_SHELL_LOOP_PLL_CFG2_REFDIV_SHIFT);
-		if (!pon->lt_cfg.loop_ps_en)
-			set |= 256;
-		else
-			set |= 128;
-		break;
-	case PON_MODE_987_XGPON:
-		if (pon->iop_cfg.msk.iop5) {
-			set = (32 << PON_SHELL_LOOP_PLL_CFG2_REFDIV_SHIFT);
-			if (!pon->lt_cfg.loop_ps_en)
-				set |= 512;
-			else
-				set |= 256;
-		} else {
-			set = (16 << PON_SHELL_LOOP_PLL_CFG2_REFDIV_SHIFT);
-			if (!pon->lt_cfg.loop_ps_en)
-				set |= 256;
-			else
-				set |= 128;
-		}
-		break;
-	case PON_MODE_9807_XGSPON:
-	case PON_MODE_989_NGPON2_2G5:
-	case PON_MODE_989_NGPON2_10G:
-		set = (32 << PON_SHELL_LOOP_PLL_CFG2_REFDIV_SHIFT);
-		if (!pon->lt_cfg.loop_ps_en)
-			set |= 512;
-		else
-			set |= 256;
-		break;
-	default:
-		return -EINVAL;
-	}
-	pon_mbox_pon_app_mask(pon, clr, set, PON_SHELL_LOOP_PLL_CFG2);
-
-	clr = PON_SHELL_LOOP_PLL_CFG0_FRAC_MASK |
-		PON_SHELL_LOOP_PLL_CFG0_DSMEN |
-		PON_SHELL_LOOP_PLL_CFG0_DACEN;
-
-	pon_mbox_pon_app_mask(pon, clr, 0, PON_SHELL_LOOP_PLL_CFG0);
-
-	pon_mbox_pon_app_mask(pon, 0, PON_SHELL_LOOP_PLL_CFG0_PLLEN,
-		PON_SHELL_LOOP_PLL_CFG0);
-
-	/* wait for PLL5 lock */
-	ret = readl_poll_timeout(pon->pon_app + PON_SHELL_LOOP_PLL_CFG0,
-		val, val & PON_SHELL_LOOP_PLL_CFG0_LOCK,
-		10, 50000);
-	if (!ret) {
-		dev_dbg(pon->dev,
-			"SW loop timing - pll5 locked successfully (0x%x)\n",
-			val);
-	} else {
-		val = pon_mbox_pon_app_read(pon, PON_SHELL_LOOP_PLL_CFG0);
-		dev_err(pon->dev,
-			"SW loop timing - pll5 not locked: %i (0x%x)\n",
-			ret, val);
-		return ret;
-	}
-
-	set = PON_SHELL_LOOP_PLL_CFG1_FOUT0EN |
-		PON_SHELL_LOOP_PLL_CFG1_FOUT1EN;
-	pon_mbox_pon_app_mask(pon, 0, set, PON_SHELL_LOOP_PLL_CFG1);
-
-	pon_mbox_pon_app_mask(pon, 0, PON_SHELL_MODE_SEL_PON_SHELL_REFCLK_EN,
-		PON_SHELL_MODE_SEL);
-
-	pon_mbox_pon_app_mask(pon, 0, PON_SHELL_GEN_CTRL_REF_CLK_EN,
-		PON_SHELL_GEN_CTRL);
-
-	ret = urx800_ref_clk_wait(pon, 1);
-	if (ret)
-		return ret;
-
-	return 0;
-}
-
-/**
- * SW loop timing state 6b
- * Set Override register
- */
-static int urx800_lt_state6(struct pon_mbox *pon)
-{
-	u32 clr, set;
-
-	/* might not be required - keep it for now */
-	clr = PON_PHY_LANE0_DIG_ASIC_TX_OVRD_IN_0_RATE_MASK |
-		PON_PHY_LANE0_DIG_ASIC_TX_OVRD_IN_0_WIDTH_MASK;
-
-	set = PON_PHY_LANE0_DIG_ASIC_TX_OVRD_IN_0_CLK_RDY |
-		PON_PHY_LANE0_DIG_ASIC_TX_OVRD_IN_0_DATA_EN |
-		PON_PHY_LANE0_DIG_ASIC_TX_OVRD_IN_0_EN;
-
-	set |= 2 << PON_PHY_LANE0_DIG_ASIC_TX_OVRD_IN_0_WITH_SHIFT;
-
-	pon_mbox_serdes_mask(pon, clr, set,
-				 PON_PHY_LANE0_DIG_ASIC_TX_OVRD_IN_0);
-
-	return 0;
-}
-
-/**
- * SW loop timing after LOS
- * SW loop timing handling to be executed after LOS
- */
-int urx800_sw_loop_timing_los(struct pon_mbox *pon)
-{
-	int ret;
-
-	if (!pon->pon_app) {
-		dev_err(pon->dev, "pon app not available\n");
-		return -ENODEV;
-	}
-
-	if (!pon->serdes) {
-		dev_err(pon->dev, "SerDes not available\n");
-		return -ENODEV;
-	}
-
-	if (pon_mbox_pon_mode_check(pon))
-		return -EINVAL;
-
-	if (!pon->lt_cfg.valid) {
-		dev_err(pon->dev, "loop timing config not valid\n");
-		return -EPERM;
-	}
-
-	mutex_lock(&pon->loop_mutex);
-
-	dev_dbg(pon->dev, "SW loop timing started\n");
-
-	ret = urx800_lt_state1(pon);
-	if (ret) {
-		dev_err(pon->dev, "SW loop timing state 1 failed: %i\n", ret);
-		mutex_unlock(&pon->loop_mutex);
-		return ret;
-	}
-
-	dev_dbg(pon->dev, "SW Loop timing state change 0 -> 1\n");
-
-	/* PRBS generation skipped for SW loop timing */
-	dev_dbg(pon->dev, "SW Loop timing state change 1 -> 2\n");
-
-	mutex_unlock(&pon->loop_mutex);
-	return 0;
-}
-
-/**
- * SW loop timing state 4 - 6
- * SW loop timing handling for states 4 up to 6.
- * SW loop timing can directly start here after reboot.
- */
-int urx800_sw_loop_timing(struct pon_mbox *pon)
-{
-	int ret;
-
-	if (!pon->pon_app) {
-		dev_err(pon->dev, "pon app not available\n");
-		return -ENODEV;
-	}
-
-	if (!pon->serdes) {
-		dev_err(pon->dev, "pon SerDes not available\n");
-		return -ENODEV;
-	}
-
-	if (pon_mbox_pon_mode_check(pon))
-		return -EINVAL;
-
-	if (!pon->lt_cfg.valid) {
-		dev_err(pon->dev, "loop timing config not valid\n");
-		return -EPERM;
-	}
-
-	mutex_lock(&pon->loop_mutex);
-
-	/* Light detected */
-	dev_dbg(pon->dev, "SW Loop timing state change 2 -> 3\n");
-
-	ret = urx800_lt_state4(pon);
-	if (ret) {
-		dev_err(pon->dev, "SW loop timing state 4 failed: %i\n", ret);
-		mutex_unlock(&pon->loop_mutex);
-		return ret;
-	}
-
-	dev_dbg(pon->dev, "SW Loop timing state change 3 -> 4\n");
-
-	ret = urx800_lt_state5(pon);
-	if (ret) {
-		dev_err(pon->dev, "SW loop timing state 5 failed: %i\n", ret);
-		mutex_unlock(&pon->loop_mutex);
-		return ret;
-	}
-
-	dev_dbg(pon->dev, "SW Loop timing state change 4 -> 5\n");
-
-	ret = urx800_lt_state6(pon);
-	if (ret) {
-		dev_err(pon->dev, "SW loop timing state 6 failed: %i\n", ret);
-		mutex_unlock(&pon->loop_mutex);
-		return ret;
-	}
-
-	dev_dbg(pon->dev, "SW Loop timing state change 5 -> 6\n");
-
-	dev_dbg(pon->dev, "SW loop timing successfully finished\n");
-
-	mutex_unlock(&pon->loop_mutex);
-	return 0;
-}
-
 int prx300_serdes_basic_init(struct pon_mbox *pon)
 {
 	u32 set, clr;
@@ -1366,7 +906,7 @@ int prx300_serdes_basic_init(struct pon_mbox *pon)
 	}
 
 	if (!pon->cgu) {
-		dev_err(pon->dev, "no intel,cgu-syscon phandle\n");
+		dev_err(pon->dev, "cgu-syscon not available\n");
 		return -ENODEV;
 	}
 
@@ -1421,7 +961,7 @@ int prx300_ref_clk_sel(struct pon_mbox *pon)
 	}
 
 	if (!pon->cgu) {
-		dev_err(pon->dev, "no intel,cgu-syscon phandle\n");
+		dev_err(pon->dev, "cgu-syscon not available\n");
 		return -ENODEV;
 	}
 
@@ -1448,7 +988,7 @@ int prx300_pll5_init(struct pon_mbox *pon)
 		pon->lt_cfg.loop_ps_en);
 
 	if (!pon->cgu) {
-		dev_err(pon->dev, "no intel,cgu-syscon phandle\n");
+		dev_err(pon->dev, "cgu-syscon not available\n");
 		return -ENODEV;
 	}
 

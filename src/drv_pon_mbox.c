@@ -60,19 +60,23 @@
  * Use that to find SoC revision.
  */
 #include <linux/sys_soc.h>
+#include <pon/pon_ip_msg.h>
 
-#define PRX_REV_B(x) \
-	{ .family = "PRX", .revision = "B"#x, .data = (void *)x }
-#define URX_REV_B(x) \
-	{ .family = "URX", .revision = "B"#x, .data = (void *)x }
+#define PRX_REV_B(x, d) \
+	{ .family = "PRX", .revision = "B"#x, .data = (void *)d }
+#define URX_REV_B(x, d) \
+	{ .family = "LGM", .revision = "B"#x, .data = (void *)d }
+#define URX_REV_C(x, d) \
+	{ .family = "LGM", .revision = "C"#x, .data = (void *)d }
 
 static const struct soc_device_attribute pon_soc_rev[] = {
-	PRX_REV_B(0),
-	PRX_REV_B(1),
-	PRX_REV_B(2),
-	PRX_REV_B(3),
-	URX_REV_B(0),
-	URX_REV_B(1),
+	PRX_REV_B(0, PONFW_HW_VERSION_VERSION_FLM_B0_FLM_B1),
+	PRX_REV_B(1, PONFW_HW_VERSION_VERSION_FLM_B0_FLM_B1),
+	PRX_REV_B(2, PONFW_HW_VERSION_VERSION_FLM_B2_LGM_A),
+	PRX_REV_B(3, PONFW_HW_VERSION_VERSION_FLM_B3),
+	URX_REV_B(0, PONFW_HW_VERSION_VERSION_LGM_B0),
+	URX_REV_B(1, PONFW_HW_VERSION_VERSION_LGM_B1),
+	URX_REV_C(0, PONFW_HW_VERSION_VERSION_LGM_C0),
 	{ /* sentinel */ }
 };
 
@@ -90,6 +94,9 @@ static unsigned int get_soc_rev(void)
 #elif defined(CONFIG_LANTIQ) && defined(CONFIG_SOC_GRX500)
 /* The function "ltq_get_soc_rev" is only available for MIPS (PRX) when using
  * the "lantiq" target (in kernel 4.9).
+ * ltq_get_soc_rev returns for PRX already the values as defined by
+ * PONFW_HW_VERSION_VERSION_FLM_B0_FLM_B1 to
+ * PONFW_HW_VERSION_VERSION_FLM_B3.
  */
 #include <lantiq.h> /* for ltq_get_soc_rev */
 #define get_soc_rev ltq_get_soc_rev
@@ -149,6 +156,8 @@ const char pon_mbox_drv_whatversion[] = "@(#)MaxLinear PON Mailbox driver, versi
 #define PON_MBOX_FW_GPON_NAME_URX_A "urx_gpon_fw_a.bin"
 /** FW supporting G-PON on URX800 type B */
 #define PON_MBOX_FW_GPON_NAME_URX_B "urx_gpon_fw_b.bin"
+/** FW supporting G-PON on URX800 type C */
+#define PON_MBOX_FW_GPON_NAME_URX_C "urx_gpon_fw_c.bin"
 /** FW supporting XG-SPON, XG-PON and NG-PON2 on type A */
 #define PON_MBOX_FW_XPON_NAME_A "prx_xpon_fw_a.bin"
 /** FW supporting XG-SPON, XG-PON and NG-PON2 on type B */
@@ -157,6 +166,8 @@ const char pon_mbox_drv_whatversion[] = "@(#)MaxLinear PON Mailbox driver, versi
 #define PON_MBOX_FW_XPON_NAME_URX_A "urx_xpon_fw_a.bin"
 /** FW supporting XGS-PON, XG-PON and NG-PON2 on URX800 type B */
 #define PON_MBOX_FW_XPON_NAME_URX_B "urx_xpon_fw_b.bin"
+/** FW supporting XGS-PON, XG-PON and NG-PON2 on URX800 type C */
+#define PON_MBOX_FW_XPON_NAME_URX_C "urx_xpon_fw_c.bin"
 
 /** Maximum number of concurrent alarms.
  *  If number of reported alarms is bigger than 32 it means that system is in
@@ -246,6 +257,11 @@ static unsigned long counters_update_timer = PON_COUNTERS_DEFAULT_UPDATE_TIME;
 module_param(counters_update_timer, ulong, 0644);
 MODULE_PARM_DESC(counters_update_timer,
 		 "time in seconds between counter updates");
+
+#if (KERNEL_VERSION(6, 2, 0) > LINUX_VERSION_CODE)
+/* in 6.2 "genl_split_ops" was added, fallback to "genl_ops" for older kernel */
+#define genl_split_ops genl_ops
+#endif
 
 /*
  * Reference to the internal driver data structure.
@@ -1904,7 +1920,7 @@ static int pon_mbox_genl_twdm_optic_pl_counters(struct sk_buff *skb,
 		dswlch_id = PON_MBOX_D_DSWLCH_ID_CURR;
 
 	header.rw = PONFW_READ;
-	header.cmd = PONFW_ONU_OPTIC_PL_COUNTERS_CMD_ID;
+	header.cmd = PONFW_TWDM_ONU_OPTIC_PL_COUNTERS_CMD_ID;
 	err = pon_mbox_twdm_optic_pl_counters_update(dswlch_id,
 						     &pon_output, pon);
 	if (err == -PON_STATUS_FW_DUP_ERR)
@@ -2333,58 +2349,48 @@ static int pon_mbox_genl_reset(struct sk_buff *skb, struct genl_info *info)
 static const char *pon_mbox_get_fw_filename(struct pon_mbox *pon,
 					    enum pon_mode mode)
 {
-	if (pon->hw_ver >= PON_MBOX_HW_VER_URX_B_TYPE) {
-		switch (mode) {
-		case PON_MODE_984_GPON:
-		case PON_MODE_AON:
+	bool gpon;
+
+	switch (mode) {
+	case PON_MODE_984_GPON:
+	case PON_MODE_AON:
+		gpon = true;
+		break;
+	case PON_MODE_987_XGPON:
+	case PON_MODE_9807_XGSPON:
+	case PON_MODE_989_NGPON2_2G5:
+	case PON_MODE_989_NGPON2_10G:
+		gpon = false;
+		break;
+	default:
+		return NULL;
+	}
+
+	if (pon->hw_ver >= PON_MBOX_HW_VER_URX_C_TYPE) {
+		if (gpon)
+			return PON_MBOX_FW_GPON_NAME_URX_C;
+		else
+			return PON_MBOX_FW_XPON_NAME_URX_C;
+	} else if (pon->hw_ver >= PON_MBOX_HW_VER_URX_B_TYPE) {
+		if (gpon)
 			return PON_MBOX_FW_GPON_NAME_URX_B;
-		case PON_MODE_987_XGPON:
-		case PON_MODE_9807_XGSPON:
-		case PON_MODE_989_NGPON2_2G5:
-		case PON_MODE_989_NGPON2_10G:
+		else
 			return PON_MBOX_FW_XPON_NAME_URX_B;
-		default:
-			return NULL;
-		}
 	} else if (pon->hw_ver >= PON_MBOX_HW_VER_URX_A_TYPE) {
-		switch (mode) {
-		case PON_MODE_984_GPON:
-		case PON_MODE_AON:
+		if (gpon)
 			return PON_MBOX_FW_GPON_NAME_URX_A;
-		case PON_MODE_987_XGPON:
-		case PON_MODE_9807_XGSPON:
-		case PON_MODE_989_NGPON2_2G5:
-		case PON_MODE_989_NGPON2_10G:
+		else
 			return PON_MBOX_FW_XPON_NAME_URX_A;
-		default:
-			return NULL;
-		}
 	} else if (pon->hw_ver >= PON_MBOX_HW_VER_B_TYPE) {
-		switch (mode) {
-		case PON_MODE_984_GPON:
-		case PON_MODE_AON:
+		if (gpon)
 			return PON_MBOX_FW_GPON_NAME_B;
-		case PON_MODE_987_XGPON:
-		case PON_MODE_9807_XGSPON:
-		case PON_MODE_989_NGPON2_2G5:
-		case PON_MODE_989_NGPON2_10G:
+		else
 			return PON_MBOX_FW_XPON_NAME_B;
-		default:
-			return NULL;
-		}
 	} else {
-		switch (mode) {
-		case PON_MODE_984_GPON:
-		case PON_MODE_AON:
+		if (gpon)
 			return PON_MBOX_FW_GPON_NAME_A;
-		case PON_MODE_987_XGPON:
-		case PON_MODE_9807_XGSPON:
-		case PON_MODE_989_NGPON2_2G5:
-		case PON_MODE_989_NGPON2_10G:
+		else
 			return PON_MBOX_FW_XPON_NAME_A;
-		default:
-			return NULL;
-		}
 	}
 }
 
@@ -2498,12 +2504,12 @@ static int pon_mbox_genl_reset_full_nl(struct sk_buff *skb,
 	}
 
 	if (pon->mode != PON_MODE_AON) {
-		if (pon->soc_func->serdes_basic_init &&
+		if (pon->soc_spec->serdes_basic_init &&
 		    !pon->serdes_cfg.srds_binit_done) {
 			/* serdes basic init can only be executed once,
 			 * otherwise ponmbox reset would fail
 			 */
-			ret = pon->soc_func->serdes_basic_init(pon);
+			ret = pon->soc_spec->serdes_basic_init(pon);
 			if (ret)
 				return ret;
 			pon->serdes_cfg.srds_binit_done = true;
@@ -2514,8 +2520,8 @@ static int pon_mbox_genl_reset_full_nl(struct sk_buff *skb,
 		pon->serdes_cfg.valid = false;
 		pon->iop_cfg.valid = false;
 
-		if (pon->soc_func->ref_clk_sel) {
-			ret = pon->soc_func->ref_clk_sel(pon);
+		if (pon->soc_spec->ref_clk_sel) {
+			ret = pon->soc_spec->ref_clk_sel(pon);
 			if (ret)
 				return ret;
 		}
@@ -2557,7 +2563,7 @@ err:
 	return ret;
 }
 
-static int is_netlink_capable(const struct genl_ops *ops,
+static int is_netlink_capable(const struct genl_split_ops *ops,
 			      struct sk_buff *skb,
 			      struct genl_info *info)
 {
@@ -2565,7 +2571,7 @@ static int is_netlink_capable(const struct genl_ops *ops,
 }
 
 /** List of the supported NetLink messages. */
-static struct genl_ops pon_mbox_genl_ops[] = {
+static struct genl_split_ops pon_mbox_genl_ops[] = {
 	{
 		.cmd = PON_MBOX_C_MSG,
 		.policy = pon_mbox_genl_policy,
@@ -2732,10 +2738,15 @@ static struct genl_family pon_mbox_genl_family = {
 #if (KERNEL_VERSION(4, 10, 0) > LINUX_VERSION_CODE)
 	.id = GENL_ID_GENERATE,
 #else
-	.ops = pon_mbox_genl_ops,
-	.n_ops = ARRAY_SIZE(pon_mbox_genl_ops),
 	.mcgrps = pon_mbox_genl_groups,
 	.n_mcgrps = ARRAY_SIZE(pon_mbox_genl_groups),
+#if (KERNEL_VERSION(6, 2, 0) > LINUX_VERSION_CODE)
+	.ops = pon_mbox_genl_ops,
+	.n_ops = ARRAY_SIZE(pon_mbox_genl_ops),
+#else
+	.split_ops = pon_mbox_genl_ops,
+	.n_split_ops = ARRAY_SIZE(pon_mbox_genl_ops),
+#endif
 #endif
 	.hdrsize = 0,
 	.name = PON_MBOX_FAMILY,
@@ -2880,36 +2891,11 @@ static int pon_mbox_genl_lt_config(struct sk_buff *skb, struct genl_info *info)
 {
 	struct pon_mbox *pon = pon_mbox_dev;
 	struct nlattr **attrs = info->attrs;
-	u8 loop_timing_mode;
 	int ret;
 
 	if (!pon) {
 		pr_err("no pon mailbox device found\n");
 		return -ENODEV;
-	}
-
-	if (attrs[PON_MBOX_LT_MODE]) {
-		loop_timing_mode = nla_get_u8(attrs[PON_MBOX_LT_MODE]);
-
-		switch (loop_timing_mode) {
-		case PONFW_ONU_OPTIC_CONFIG_LOOP_TIMING_MODE_FW:
-		case PONFW_ONU_OPTIC_CONFIG_LOOP_TIMING_MODE_FW2:
-		case PONFW_ONU_OPTIC_CONFIG_LOOP_TIMING_MODE_FW4:
-			pon->lt_cfg.in_drv = false;
-			pon->lt_cfg.fw_msg = false;
-			break;
-		case PONFW_ONU_OPTIC_CONFIG_LOOP_TIMING_MODE_SW:
-			pon->lt_cfg.in_drv = true;
-			pon->lt_cfg.fw_msg = true;
-			break;
-		default:
-			dev_err(pon->dev, "unknown loop timing mode: %i\n",
-				loop_timing_mode);
-			return -EPERM;
-		}
-	} else {
-		dev_err(pon->dev, "loop timing mode missing\n");
-		return -EINVAL;
 	}
 
 	if (attrs[PON_MBOX_LT_POWER_SAVE]) {
@@ -2921,19 +2907,19 @@ static int pon_mbox_genl_lt_config(struct sk_buff *skb, struct genl_info *info)
 	}
 
 	pon->lt_cfg.valid = true;
-	dev_dbg(pon->dev, "loop timing config received (%d/%d)\n",
-		loop_timing_mode, pon->lt_cfg.loop_ps_en);
+	dev_dbg(pon->dev, "loop timing config received (%d)\n",
+		pon->lt_cfg.loop_ps_en);
 
 	if (pon->serdes_cfg.valid &&
 	    pon->iop_cfg.valid &&
 	    !pon->serdes_cfg.srds_init_done) {
-		if (pon->soc_func->pll5_init) {
-			ret = pon->soc_func->pll5_init(pon);
+		if (pon->soc_spec->pll5_init) {
+			ret = pon->soc_spec->pll5_init(pon);
 			if (ret)
 				return ret;
 		}
 
-		ret = pon->soc_func->serdes_init(pon);
+		ret = pon->soc_spec->serdes_init(pon);
 		if (ret)
 			return -ENXIO;
 
@@ -2955,7 +2941,7 @@ static int pon_mbox_genl_serdes_config(struct sk_buff *skb,
 		return -ENODEV;
 	}
 
-	if (!pon->soc_func->serdes_init || pon->mode == PON_MODE_AON)
+	if (!pon->soc_spec->serdes_init || pon->mode == PON_MODE_AON)
 		return 0;
 
 	for (i = 1; i <= PON_MBOX_SRDS_MAX; i++) {
@@ -2990,13 +2976,13 @@ static int pon_mbox_genl_serdes_config(struct sk_buff *skb,
 	if (pon->lt_cfg.valid &&
 	    pon->iop_cfg.valid &&
 	    !pon->serdes_cfg.srds_init_done) {
-		if (pon->soc_func->pll5_init) {
-			ret = pon->soc_func->pll5_init(pon);
+		if (pon->soc_spec->pll5_init) {
+			ret = pon->soc_spec->pll5_init(pon);
 			if (ret)
 				return ret;
 		}
 
-		ret = pon->soc_func->serdes_init(pon);
+		ret = pon->soc_spec->serdes_init(pon);
 		if (ret)
 			return -ENXIO;
 
@@ -3033,13 +3019,13 @@ static int pon_mbox_genl_iop_config(struct sk_buff *skb, struct genl_info *info)
 	if (pon->serdes_cfg.valid &&
 	    pon->lt_cfg.valid &&
 	    !pon->serdes_cfg.srds_init_done) {
-		if (pon->soc_func->pll5_init) {
-			ret = pon->soc_func->pll5_init(pon);
+		if (pon->soc_spec->pll5_init) {
+			ret = pon->soc_spec->pll5_init(pon);
 			if (ret)
 				return ret;
 		}
 
-		ret = pon->soc_func->serdes_init(pon);
+		ret = pon->soc_spec->serdes_init(pon);
 		if (ret)
 			return -ENXIO;
 
@@ -3211,9 +3197,9 @@ static int pon_uart_config_set(struct pon_mbox *pon,
 #if !defined(CONFIG_X86_INTEL_LGM) && !defined(CONFIG_SOC_LGM)
 	unsigned int val;
 
-	if (IS_ERR(pon->chiptop)) {
-		dev_err(pon->dev, "No intel,chiptop-syscon available\n");
-		return PTR_ERR(pon->chiptop);
+	if (pon->chiptop) {
+		dev_err(pon->dev, "chiptop-syscon not available\n");
+		return -EFAULT;
 	}
 
 	switch (mode) {
@@ -3584,21 +3570,21 @@ static int pon_mbox_fatal_err_handle(struct pon_mbox *pon,
 	if (ret)
 		return ret;
 
-	if (!pon->soc_func->serdes_init) {
+	if (!pon->soc_spec->serdes_init) {
 		usleep_range(50, 100);
 		ret = reset_control_deassert(pon->reset_serdes);
 		if (ret)
 			return ret;
 	}
 
-	if (pon->soc_func->serdes_basic_init) {
-		ret = pon->soc_func->serdes_basic_init(pon);
+	if (pon->soc_spec->serdes_basic_init) {
+		ret = pon->soc_spec->serdes_basic_init(pon);
 		if (ret)
 			return ret;
 	}
 
-	if (pon->soc_func->ref_clk_sel) {
-		ret = pon->soc_func->ref_clk_sel(pon);
+	if (pon->soc_spec->ref_clk_sel) {
+		ret = pon->soc_spec->ref_clk_sel(pon);
 		if (ret)
 			return ret;
 	}
@@ -3614,9 +3600,7 @@ static void pon_mbox_handle_alarm_report(struct pon_mbox *pon, char *msg,
 					 size_t msg_len)
 {
 	struct ponfw_report_alarm *alarm = (struct ponfw_report_alarm *)msg;
-	struct ponfw_loop_time_config status_msg = {0,};
 	struct device *dev = pon->dev;
-	ssize_t ret_fw;
 	int ret;
 
 	if (msg_len != sizeof(*alarm)) {
@@ -3626,34 +3610,6 @@ static void pon_mbox_handle_alarm_report(struct pon_mbox *pon, char *msg,
 	}
 
 	switch (alarm->alarm_id) {
-	case PON_ALARM_ID_STATIC_LOS:
-		dev_dbg(dev, "LOS (Loss of Signal) alarm set\n");
-		/* return if loop timing is not done in software */
-		if (!pon->lt_cfg.in_drv)
-			return;
-
-		if (pon->lt_cfg.fw_msg) {
-			status_msg.lts = PONFW_LOOP_TIME_CONFIG_LTS_UNLOCK;
-			ret_fw = pon_mbox_send(PONFW_LOOP_TIME_CONFIG_CMD_ID,
-					       PONFW_WRITE, &status_msg,
-					       sizeof(status_msg), NULL, 0);
-			if (ret_fw < 0) {
-				dev_err(dev, "Sending loop time status to FW failed: %zi\n",
-					ret_fw);
-				return;
-			}
-		}
-
-		/* reset Serdes settings for loop timing */
-		if (!pon->soc_func->sw_loop_timing_los) {
-			dev_err(dev, "SW loop timing not supported\n");
-			return;
-		}
-
-		ret = pon->soc_func->sw_loop_timing_los(pon);
-		if (ret)
-			return;
-		break;
 	case PON_ALARM_ID_STATIC_PCE:
 		ret = pon_mbox_fatal_err_handle(pon,
 						"persistent crossbar access error");
@@ -3690,57 +3646,12 @@ static void pon_mbox_handle_alarm_clear(struct pon_mbox *pon, char *msg,
 {
 	struct ponfw_clear_alarm *alarm = (struct ponfw_clear_alarm *)msg;
 	struct device *dev = pon->dev;
-	int ret;
 
 	if (msg_len != sizeof(*alarm)) {
 		dev_err(dev, "Alarm clear with unexpected size: %zu\n",
 			msg_len);
 		return;
 	}
-
-	if (alarm->alarm_id == PON_ALARM_ID_STATIC_LOS) {
-		struct ponfw_loop_time_config status_msg = {0,};
-		ssize_t ret_fw;
-
-		dev_dbg(dev, "LOS (Loss of Signal) alarm cleared\n");
-		/* return if loop timing is not done in software */
-		if (!pon->lt_cfg.in_drv)
-			return;
-
-		if (!pon->soc_func->sw_loop_timing) {
-			dev_err(dev, "SW loop timing not supported\n");
-			return;
-		}
-
-		ret = pon->soc_func->sw_loop_timing(pon);
-		if (ret)
-			return;
-
-		if (pon->lt_cfg.fw_msg) {
-			status_msg.lts = PONFW_LOOP_TIME_CONFIG_LTS_LOCK;
-			ret_fw = pon_mbox_send(PONFW_LOOP_TIME_CONFIG_CMD_ID,
-					       PONFW_WRITE, &status_msg,
-					       sizeof(status_msg), NULL, 0);
-			if (ret_fw < 0)
-				dev_err(dev, "Sending loop time status to FW failed: %zi\n",
-					ret_fw);
-		}
-	}
-}
-
-static bool pon_mbox_check_active_alarm(struct pon_mbox *pon,
-					uint32_t alarm_id,
-					uint32_t alarms[MAX_ALARMS_NUMBER],
-					ssize_t alarms_number)
-{
-	int i;
-
-	for (i = 0; i < alarms_number; i++) {
-		if (alarms[i] == alarm_id)
-			return true;
-	}
-
-	return false;
 }
 
 static void pon_mbox_handle_ploam_state(struct pon_mbox *pon, char *msg,
@@ -3748,11 +3659,6 @@ static void pon_mbox_handle_ploam_state(struct pon_mbox *pon, char *msg,
 {
 	struct ponfw_ploam_state *ploam = (struct ponfw_ploam_state *)msg;
 	struct device *dev = pon->dev;
-	struct ponfw_loop_time_config status_msg = {0,};
-	uint32_t alarms[MAX_ALARMS_NUMBER];
-	bool left_init = false;
-	ssize_t ret_fw, alarms_number;
-	int ret;
 
 	if (msg_len != sizeof(*ploam)) {
 		dev_err(dev, "PLOAM state event with unexpected size: %zu\n",
@@ -3767,9 +3673,6 @@ static void pon_mbox_handle_ploam_state(struct pon_mbox *pon, char *msg,
 	/* check if this is the first PLOAM state change from the init state */
 	switch (pon->mode) {
 	case PON_MODE_984_GPON:
-		if (ploam->ploam_act == 10 &&
-		    ploam->ploam_prev == 0)
-			left_init = true;
 		if (ploam->ploam_act == 50)
 			pon->serdes_error = false;
 		break;
@@ -3777,10 +3680,7 @@ static void pon_mbox_handle_ploam_state(struct pon_mbox *pon, char *msg,
 	case PON_MODE_9807_XGSPON:
 	case PON_MODE_989_NGPON2_2G5:
 	case PON_MODE_989_NGPON2_10G:
-		if (ploam->ploam_act == 11 &&
-		    ploam->ploam_prev == 10)
-			left_init = true;
-		if (ploam->ploam_act == 51)
+		if (ploam->ploam_act == 51 || ploam->ploam_act == 52)
 			pon->serdes_error = false;
 		break;
 	default:
@@ -3788,49 +3688,7 @@ static void pon_mbox_handle_ploam_state(struct pon_mbox *pon, char *msg,
 			pon->mode);
 	}
 
-	/*
-	 * Loop timing configuration is also needed when the fiber is already
-	 * connected at boot up, then we do not get any signal los clear event.
-	 * The alarm state is only reliable when the FW is in O11 for XGSPON
-	 * or O10 in GPON mode.
-	 */
-	if (!left_init || !pon->lt_cfg.in_drv)
-		return;
-
-	ret_fw = pon_mbox_send(PONFW_GET_STATIC_ALARM_CMD_ID,
-			       PONFW_READ, NULL, 0, &alarms,
-			       ARRAY_SIZE(alarms));
-	if (ret_fw < 0) {
-		dev_err(pon->dev, "getting static Alarms failed: %zi\n",
-			ret_fw);
-		return;
-	}
-
-	alarms_number = ret_fw / PON_MBOX_BYTES_PER_WORD;
-
-	/* Loop timing should only be done when we have light */
-	if (pon_mbox_check_active_alarm(pon, PON_ALARM_ID_STATIC_LOS,
-					alarms, alarms_number))
-		return;
-
-	if (!pon->soc_func->sw_loop_timing) {
-		dev_err(dev, "SW loop timing not supported\n");
-		return;
-	}
-
-	ret = pon->soc_func->sw_loop_timing(pon);
-	if (ret)
-		return;
-
-	if (pon->lt_cfg.fw_msg) {
-		status_msg.lts = PONFW_LOOP_TIME_CONFIG_LTS_LOCK;
-		ret_fw = pon_mbox_send(PONFW_LOOP_TIME_CONFIG_CMD_ID,
-				       PONFW_WRITE, &status_msg,
-				       sizeof(status_msg), NULL, 0);
-		if (ret_fw < 0)
-			dev_err(pon->dev, "Sending loop time status to FW failed: %zi\n",
-				ret_fw);
-	}
+	/* Loop timing is done in FW only. */
 }
 
 /* Structure containing the FW event information for the Linux work queue. */
@@ -4936,6 +4794,10 @@ static void pon_mbox_init_config(struct work_struct *work)
 		goto init_complete;
 
 	hw_ver.version = get_soc_rev();
+	/* inidcate a predefined/alternate HW version to the firmware */
+	if (pon->soc_spec->hw_version_firmware)
+		hw_ver.version = pon->soc_spec->hw_version_firmware;
+
 	ret = pon_mbox_send(PONFW_HW_VERSION_CMD_ID, PONFW_WRITE,
 			    &hw_ver, sizeof(hw_ver), NULL, 0);
 	if (ret < 0)
@@ -5076,8 +4938,8 @@ static int pon_mbox_download_firmware(struct pon_mbox *pon, u32 boot_stat)
 	 * we should be able to put the WAN XPCS into reset.
 	 * In case serdes_init is executed, the xpcs reset is performed there.
 	 */
-	if (!pon->soc_func->serdes_init &&
-		pon->reset_xpcs && !pon->reset_xpcs_done) {
+	if (!pon->soc_spec->serdes_init &&
+	    pon->reset_xpcs && !pon->reset_xpcs_done) {
 		ret = reset_control_assert(pon->reset_xpcs);
 		if (ret) {
 			dev_err(pon->dev, "WAN XPCS reset assert failed: %i",
@@ -5091,7 +4953,7 @@ static int pon_mbox_download_firmware(struct pon_mbox *pon, u32 boot_stat)
 	 * have same starting conditions even in case of SW
 	 * triggered restart
 	 */
-	if (pon->soc_func->serdes_init) {
+	if (pon->soc_spec->serdes_init) {
 		ret = reset_control_assert(pon->reset_serdes);
 		if (ret) {
 			dev_err(pon->dev, "SerDes reset assert failed: %i",
@@ -5266,8 +5128,11 @@ static int pon_mbox_register(struct pon_mbox *pon)
 	ret = pon_mbox_read32(pon, PON_MBOX_FUSE0, &fuse0);
 	if (ret)
 		return ret;
-	pon->hw_ver = (fuse0 & PON_MBOX_FUSE0_VER_MASK) >>
-			PON_MBOX_FUSE0_VER_SHIFT;
+	if (pon->soc_spec->hw_version_override)
+		pon->hw_ver = pon->soc_spec->hw_version_override;
+	else
+		pon->hw_ver = (fuse0 & PON_MBOX_FUSE0_VER_MASK) >>
+				PON_MBOX_FUSE0_VER_SHIFT;
 	magic = (fuse0 & PON_MBOX_FUSE0_ID_MASK) >> PON_MBOX_FUSE0_ID_SHIFT;
 
 	/*
@@ -5418,15 +5283,21 @@ static int pon_mbox_spi_write(struct pon_mbox *pon, int reg,
 	return spi_sync(spi, &m);
 }
 
-static const struct pon_soc_func spi_data = {
+static const struct pon_soc_data spi_data = {
 	.pon_shell_init = NULL,
 	.serdes_basic_init = NULL,
 	.ref_clk_sel = NULL,
 	.pll5_init = NULL,
 	.serdes_init = NULL,
-	.sw_loop_timing = NULL,
-	.sw_loop_timing_los = NULL,
 };
+
+#if (KERNEL_VERSION(6, 3, 0) > LINUX_VERSION_CODE)
+/* spi_get_chipselect was added in 6.3 */
+static inline u8 spi_get_chipselect(const struct spi_device *spi, u8 idx)
+{
+	return spi->chip_select;
+}
+#endif
 
 /**
  * This function does the SPI specific init for one device.
@@ -5438,9 +5309,8 @@ static int pon_mbox_spi_probe(struct spi_device *spi)
 	int ret;
 
 	dev_notice(dev,
-		   "found device (CLK: %i hz, CS: %i, M: %i, BTW: %i, "
-		   "irq: %i)\n",
-		   spi->max_speed_hz, spi->chip_select, spi->mode,
+		   "found device (CLK: %u hz, CS: %u, M: %u, BTW: %u, irq: %i)\n",
+		   spi->max_speed_hz, spi_get_chipselect(spi, 0), spi->mode,
 		   spi->bits_per_word, spi->irq);
 
 	pon = devm_kzalloc(dev, sizeof(*pon), GFP_KERNEL);
@@ -5453,7 +5323,7 @@ static int pon_mbox_spi_probe(struct spi_device *spi)
 	pon->irqs[0] = spi->irq;
 	pon->read = pon_mbox_spi_read;
 	pon->write = pon_mbox_spi_write;
-	pon->soc_func = &spi_data;
+	pon->soc_spec = &spi_data;
 
 	ret = pon_mbox_register(pon);
 	if (ret)
@@ -5492,7 +5362,7 @@ static int pon_mbox_spi_probe(struct spi_device *spi)
 	return 0;
 }
 
-static int pon_mbox_spi_remove(struct spi_device *spi)
+static int _pon_mbox_spi_remove(struct spi_device *spi)
 {
 	struct pon_mbox *pon = spi_get_drvdata(spi);
 
@@ -5509,31 +5379,49 @@ static int pon_mbox_spi_remove(struct spi_device *spi)
 	return 0;
 }
 
-static const struct pon_soc_func prx300_data = {
+#if (KERNEL_VERSION(5, 18, 0) > LINUX_VERSION_CODE)
+#define pon_mbox_spi_remove _pon_mbox_spi_remove
+#else
+static void pon_mbox_spi_remove(struct spi_device *spi)
+{
+	(void)_pon_mbox_spi_remove(spi);
+}
+#endif
+
+static const struct pon_soc_data prx300_data = {
 	.pon_shell_init = NULL,
 	.serdes_basic_init = prx300_serdes_basic_init,
 	.ref_clk_sel = prx300_ref_clk_sel,
 	.pll5_init = prx300_pll5_init,
 	.serdes_init = prx300_serdes_init,
-	.sw_loop_timing = NULL,
-	.sw_loop_timing_los = NULL,
 };
 
-static const struct pon_soc_func urx800_data = {
+static const struct pon_soc_data urx800_data = {
 	.pon_shell_init = urx800_pon_shell_init,
 	.serdes_basic_init = urx800_serdes_basic_init,
 	.ref_clk_sel = urx800_ref_clk_sel,
 	.pll5_init = urx800_pll5_init,
 	.serdes_init = urx800_serdes_init,
-	.sw_loop_timing = urx800_sw_loop_timing,
-	.sw_loop_timing_los = urx800_sw_loop_timing_los,
+};
+
+static const struct pon_soc_data urx800c_data = {
+	.pon_shell_init = urx800_pon_shell_init,
+	.serdes_basic_init = urx800_serdes_basic_init,
+	.ref_clk_sel = urx800_ref_clk_sel,
+	.pll5_init = urx800c_pll5_init,
+	.serdes_init = urx800_serdes_init,
+	.hw_version_override = PON_MBOX_HW_VER_URX_C_TYPE,
+	.hw_version_firmware = PONFW_HW_VERSION_VERSION_LGM_C0,
 };
 
 static const struct of_device_id pon_mbox_of_match[] = {
 	{ .compatible = "intel,pon_mbox", .data = &prx300_data },
 	{ .compatible = "intel,falcon_mx_pon_mbox", .data = &prx300_data },
 	{ .compatible = "intel,prx300-pon-mbox", .data = &prx300_data },
+	{ .compatible = "mxl,prx300-pon-mbox", .data = &prx300_data },
 	{ .compatible = "intel,urx800-pon-mbox", .data = &urx800_data },
+	{ .compatible = "mxl,urx800-pon-mbox", .data = &urx800_data },
+	{ .compatible = "mxl,urx800c-pon-mbox", .data = &urx800c_data },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, pon_mbox_of_match);
@@ -5543,6 +5431,7 @@ static const struct spi_device_id pon_mbox_spi_ids[] = {
 	{ .name = "falcon_mx_pon_mbox" },
 	{ .name = "prx300-pon-mbox" },
 	{ .name = "urx800-pon-mbox" },
+	{ .name = "urx800c-pon-mbox" },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, pon_mbox_spi_ids);
@@ -5730,7 +5619,7 @@ static int pon_mbox_pdev_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev_of_node(dev);
 	struct resource *res;
-	const struct pon_soc_func *soc_data = NULL;
+	const struct pon_soc_data *soc_data = NULL;
 	struct device *mbox_char_dev;
 	int ret;
 
@@ -5748,7 +5637,7 @@ static int pon_mbox_pdev_probe(struct platform_device *pdev)
 		dev_err(dev, "No data found!\n");
 		return -EINVAL;
 	}
-	pon->soc_func = soc_data;
+	pon->soc_spec = soc_data;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "ponip");
 	if (!res)
@@ -5803,8 +5692,7 @@ static int pon_mbox_pdev_probe(struct platform_device *pdev)
 		pon->pon_apb_app = NULL;
 	}
 
-	pon->reset_wanss = devm_reset_control_get_optional_exclusive(dev,
-								     "wanss");
+	pon->reset_wanss = devm_reset_control_get_optional_shared(dev, "wanss");
 	if (IS_ERR(pon->reset_wanss)) {
 		dev_err(dev, "failed to get wanss reset: %li\n",
 			PTR_ERR(pon->reset_wanss));
@@ -5846,28 +5734,32 @@ static int pon_mbox_pdev_probe(struct platform_device *pdev)
 		}
 	}
 
-	/* Optional */
-	pon->cgu = syscon_regmap_lookup_by_phandle(np, "intel,cgu-syscon");
-	if (PTR_ERR(pon->cgu) == -ENODEV) {
-		pon->cgu = NULL;
-	} else if (IS_ERR(pon->cgu)) {
-		dev_err(dev, "failed to get intel,cgu-syscon phandle: %li\n",
+	/* Optional, try first "mxl" and then "intel" if not found */
+	pon->cgu =
+		syscon_regmap_lookup_by_phandle_optional(np, "mxl,cgu-syscon");
+	if (!pon->cgu)
+		pon->cgu = syscon_regmap_lookup_by_phandle_optional(
+			np, "intel,cgu-syscon");
+	if (IS_ERR(pon->cgu)) {
+		dev_err(dev, "failed to get cgu-syscon phandle: %li\n",
 			PTR_ERR(pon->cgu));
 		return PTR_ERR(pon->cgu);
 	}
 
-	/* The chiptop functions are optional */
-	pon->chiptop = syscon_regmap_lookup_by_phandle(np,
-						       "intel,chiptop-syscon");
-	if (PTR_ERR(pon->chiptop) == -ENODEV) {
-		pon->chiptop = NULL;
-	} else if (IS_ERR(pon->chiptop)) {
+	/* The chiptop functions are optional, accept with "mxl" or "intel" */
+	pon->chiptop = syscon_regmap_lookup_by_phandle_optional(
+		np, "mxl,chiptop-syscon");
+	if (!pon->chiptop)
+		pon->chiptop = syscon_regmap_lookup_by_phandle_optional(
+			np, "intel,chiptop-syscon");
+	if (IS_ERR(pon->chiptop)) {
 		dev_err(dev,
-			"failed to get intel,chiptop-syscon phandle: %li\n",
+			"failed to get chiptop-syscon phandle: %li\n",
 			PTR_ERR(pon->chiptop));
 		return PTR_ERR(pon->chiptop);
+	}
 #if defined(CONFIG_X86_INTEL_LGM) || defined(CONFIG_SOC_LGM)
-	} else {
+	if (pon->chiptop) {
 		/* Enable voltage comparator for dying gasp on URX */
 		ret = regmap_update_bits(pon->chiptop, URX_CHIPTOP_PON_CR,
 					 BIT(0), BIT(0));
@@ -5875,8 +5767,8 @@ static int pon_mbox_pdev_probe(struct platform_device *pdev)
 			dev_err(pon->dev,
 				"Enabling of voltage comparator failed %d\n",
 				ret);
-#endif
 	}
+#endif
 
 #if !defined(SKIP_TEP) && \
 	(defined(CONFIG_X86_INTEL_LGM) || defined(CONFIG_SOC_LGM))
@@ -5918,8 +5810,11 @@ static int pon_mbox_pdev_probe(struct platform_device *pdev)
 	}
 
 	/* Check for Serdes FW to be downloaded - optional */
-	pon->serdes_fw_dl = device_property_present(&pdev->dev,
-						    "intel,serdes-fw-dl");
+	pon->serdes_fw_dl =
+		device_property_present(&pdev->dev, "mxl,serdes-fw-dl");
+	if (!pon->serdes_fw_dl)
+		pon->serdes_fw_dl = device_property_present(
+			&pdev->dev, "intel,serdes-fw-dl");
 	if (pon->serdes_fw_dl)
 		dev_dbg(dev, "Serdes FW download enabled\n");
 	else
@@ -5937,7 +5832,7 @@ static int pon_mbox_pdev_probe(struct platform_device *pdev)
 	 * is executed as soon as all config parameters have been received.
 	 * Hence, deassert the reset here only if serdes_init is not available.
 	 */
-	if (!pon->soc_func->serdes_init) {
+	if (!pon->soc_spec->serdes_init) {
 		ret = reset_control_deassert(pon->reset_serdes);
 		if (ret)
 			return ret;
@@ -5961,8 +5856,8 @@ static int pon_mbox_pdev_probe(struct platform_device *pdev)
 		goto err_clk_freq_disable;
 	}
 
-	if (pon->soc_func->pon_shell_init) {
-		ret = pon->soc_func->pon_shell_init(pon);
+	if (pon->soc_spec->pon_shell_init) {
+		ret = pon->soc_spec->pon_shell_init(pon);
 		if (ret) {
 			dev_err(dev, "failed to init PON shell: %i\n", ret);
 			goto err_clk_freq_disable;
@@ -6075,11 +5970,17 @@ static struct platform_driver pon_mbox_pdev_driver = {
 static const struct of_device_id pinselect_match_table[] = {
 	{ .compatible = "intel,pon-pinselect-rx-los",
 	  .data = &pinctrl_array[PON_MBOX_GPIO_PIN_ID_RX_LOS] },
+	{ .compatible = "mxl,pon-pinselect-rx-los",
+	  .data = &pinctrl_array[PON_MBOX_GPIO_PIN_ID_RX_LOS] },
 	{ .compatible = "intel,pon-pinselect-1pps",
+	  .data = &pinctrl_array[PON_MBOX_GPIO_PIN_ID_1PPS] },
+	{ .compatible = "mxl,pon-pinselect-1pps",
 	  .data = &pinctrl_array[PON_MBOX_GPIO_PIN_ID_1PPS] },
 	{ .compatible = "intel,pon-pinselect-ntr",
 	  .data = &pinctrl_array[PON_MBOX_GPIO_PIN_ID_NTR] },
-	{ },
+	{ .compatible = "mxl,pon-pinselect-ntr",
+	  .data = &pinctrl_array[PON_MBOX_GPIO_PIN_ID_NTR] },
+	{},
 };
 
 static int pinselect_probe(struct platform_device *pdev)
@@ -6120,7 +6021,11 @@ static int __init pon_mbox_driver_init(void)
 {
 	int ret;
 
+#if (KERNEL_VERSION(6, 2, 0) > LINUX_VERSION_CODE)
 	pon_mbox_class = class_create(THIS_MODULE, "pon_mbox");
+#else
+	pon_mbox_class = class_create("pon_mbox");
+#endif
 	if (IS_ERR(pon_mbox_class)) {
 		pr_err("Error %ld creating class 'pon_mbox'!\n",
 		       PTR_ERR(pon_mbox_class));
@@ -6189,9 +6094,11 @@ MODULE_FIRMWARE(PON_MBOX_FW_GPON_NAME_A);
 MODULE_FIRMWARE(PON_MBOX_FW_GPON_NAME_B);
 MODULE_FIRMWARE(PON_MBOX_FW_GPON_NAME_URX_A);
 MODULE_FIRMWARE(PON_MBOX_FW_GPON_NAME_URX_B);
+MODULE_FIRMWARE(PON_MBOX_FW_GPON_NAME_URX_C);
 MODULE_FIRMWARE(PON_MBOX_FW_XPON_NAME_A);
 MODULE_FIRMWARE(PON_MBOX_FW_XPON_NAME_B);
 MODULE_FIRMWARE(PON_MBOX_FW_XPON_NAME_URX_A);
 MODULE_FIRMWARE(PON_MBOX_FW_XPON_NAME_URX_B);
+MODULE_FIRMWARE(PON_MBOX_FW_XPON_NAME_URX_C);
 
 /** @} */

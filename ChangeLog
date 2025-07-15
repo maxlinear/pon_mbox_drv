@@ -1,5 +1,57 @@
 NEXT VERSION
 
+v1.27.0 2025.04.29
+
+- PONRTSYS-14752: Implement link status reporting for pon0 netdev
+- PONRTSYS-14777: Create "altname" for pon0 interface
+  + Check for the attribute "intel,altname" in the pon_eth node
+- PONRTSYS-13291: OMCI ME 344/454 - (Enhanced) TC PMHD - Feature implementation
+  + Enhancements in the driver functionality to allow LODS specific mbox message
+    PONFW_TWDM_LODS_COUNTERS_CMD_ID for counter retrieval in XG(S)-PON mode in
+    addition to NG-PON2 mode.
+
+v1.26.1 2025.03.13
+
+- PONRTSYS-14680: Prevent transmission if not in O5 state
+
+v1.26.0 2025.02.03
+
+- PONRTSYS-14349: Import FW message interface 4.0 header files
+
+v1.25.2 2024.08.29
+
+- PONRTSYS-14333: Active Ethernet mode kernel crash
+  + Request "wanss" reset as shared reset, to ensure it is kept deasserted also
+    when the xpcs driver is trying to toggle it.
+- PONRTSYS-13996: UDP speedtest setup-cleanup repeated iterations lead to RTNETLINK error
+  + extend the scan for gem across all active p-mappers while adding the gem to
+    a p-mapper thereby preventing shifting of ownership (from DPM's point of
+    view) to another p-mapper as new p-mappers get added which use same gem.
+  + while destructing a p-mapper move ownership (from DPM's point of view) of
+    any potentially shared gem to next available p-mapper which references it.
+- PONRTSYS-14159: [NG-PON2] T-CONT net_devices associated with alloc-IDs greater than 4095 cannot be created
+  + XGEM Port-ID also corrected for XG-PON1 case valid range begins at 1023 and not at 1021!
+- PONRTSYS-14160: [NG-PON2] GEM net_devices associated with XGEM Port-IDs greater than 4095 cannot be created
+
+v1.25.1 2024.07.12
+
+- PONRTSYS-14139: [TPZ] Adapt pon_mbox-driver for Kernel 6.6
+  + Allow to compile mbox driver (CONFIG_PON_MBOX_DRV) against newer kernel
+- PONRTSYS-12980: LGM-C FW selection added
+- PONRTSYS-14157: invert the input selector bit of loop timing pll for LGM-C
+- PONRTSYS-14147: Soc specifics added to pon_soc_func
+  + pon_soc_func renamed to pon_soc_data
+  + Soc specific HW version override added, used for LGM-C
+  + Soc specific HW version for the firmware added, used for LGM-C
+  + HW IDs in PONFW_HW_VERSION_CMD_ID updated and supported
+
+v1.25.0 2024.05.15
+
+- PONRTSYS-13835: new FW-SAS 26, changes for LGM-C
+  + additional padding function
+  + loop timing modes removed
+  + TIB interop bit removed
+
 v1.24.1 2024.04.09
 
 - PONRTSYS-13043: Bringup or port datapath components for PRX to kernel 5.15

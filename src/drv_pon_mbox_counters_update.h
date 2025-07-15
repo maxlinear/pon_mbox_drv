@@ -152,7 +152,7 @@ int pon_mbox_twdm_lods_counters_update(u8 dswlch_id,
 				       struct pon_mbox *pon_mbox_dev);
 
 /**
- * @brief Counters update function for PONFW_ONU_OPTIC_PL_COUNTERS_CMD_ID
+ * @brief Counters update function for PONFW_TWDM_ONU_OPTIC_PL_COUNTERS_CMD_ID
  *        firmware message.
  *
  * @param[out] dswlch_id   TWDM DS wavelength channel ID

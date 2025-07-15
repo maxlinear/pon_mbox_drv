@@ -407,7 +407,9 @@ static int pon_ptp_remove(struct platform_device *pdev)
 static const struct of_device_id pon_ptp_match[] = {
 	{ .compatible = "intel,falcon-mountain-pon-ptp" },
 	{ .compatible = "intel,prx300-pon-ptp" },
+	{ .compatible = "mxl,prx300-pon-ptp" },
 	{ .compatible = "intel,urx800-pon-ptp" },
+	{ .compatible = "mxl,urx800-pon-ptp" },
 	{},
 };
 MODULE_DEVICE_TABLE(of, pon_ptp_match);

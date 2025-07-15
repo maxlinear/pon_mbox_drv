@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2020 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2020 - 2025 MaxLinear, Inc.
  * Copyright (c) 2018 - 2020 Intel Corporation
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
@@ -18,7 +18,7 @@
 #include <drv_pon_mbox_counters_update.h>
 
 #ifndef BIT_ULL
-#define BIT_ULL  (1ULL << (nr))
+#define BIT_ULL(nr)  (1ULL << (nr))
 #endif
 
 /* Each of indexes below points to counter-specific auxiliary control data
@@ -75,7 +75,7 @@ union ponfw_cnt {
 	struct ponfw_rx_eth_counters rx_eth;
 	struct ponfw_tx_eth_counters tx_eth;
 	struct ponfw_twdm_lods_counters twdm_lods;
-	struct ponfw_onu_optic_pl_counters onu_optic_pl;
+	struct ponfw_twdm_onu_optic_pl_counters onu_optic_pl;
 	struct ponfw_twdm_tc_counters twdm_tc;
 	struct ponfw_xgtc_ploam_ds_counters xgtc_ploam_ds;
 	struct ponfw_gtc_ploam_ds_counters gtc_ploam_ds;
@@ -621,7 +621,7 @@ rx_eth_counters_init(struct ponfw_cnt_io_grp *cnt_io_grp, u8 twdm_dswlch_id,
 		if (!need_ngpon2_update(pon_mbox_dev, twdm_dswlch_id))
 			return CNT_UPDATE_SKIP;
 
-	cnt_io_grp->prime.in.rx_eth.idx = port_idx;
+	cnt_io_grp->prime.in.rx_eth.gem_idx = port_idx;
 
 	return CNT_UPDATE_READY;
 }
@@ -776,15 +776,16 @@ pon_mbox_cnt_eth_tx_last_update_update(u8 port_idx,
 }
 
 static enum cnt_init_status
-twdm_lods_counters_init(struct ponfw_cnt_io_grp *cnt_io_grp, u8 twdm_dswlch_id,
+pon_lods_counters_init(struct ponfw_cnt_io_grp *cnt_io_grp, u8 twdm_dswlch_id,
 			u8 port_idx,
 			struct pon_mbox *pon_mbox_dev)
 {
 	(void)port_idx;
 	(void)cnt_io_grp;
-	/* Counters are only supported in NG-PON2 mode */
-	if (!is_ngpon2_mode(pon_mbox_dev))
+	/* Counters are only supported in non GPON mode */
+	if (pon_mbox_dev->mode == PON_MODE_984_GPON)
 		return CNT_UPDATE_SKIP;
+
 	/* Update NGPON2 counter for the current WL Ch ID and accumulated */
 	if (need_ngpon2_update(pon_mbox_dev, twdm_dswlch_id))
 		return CNT_UPDATE_READY;
@@ -855,7 +856,7 @@ static int twdm_optic_pl_counters_update(union pon_cnt *cnt, u8 port_idx,
 {
 	struct pon_mbox_twdm_optic_pl_counters *counters_copy =
 			&cnt->twdm_optic_pl;
-	struct ponfw_onu_optic_pl_counters *fw_output =
+	struct ponfw_twdm_onu_optic_pl_counters *fw_output =
 			&cnt_io_grp->prime.out.onu_optic_pl;
 	struct pon_mbox_twdm_optic_pl_counters *counters;
 	struct pon_mbox_twdm_optic_pl_counters fw_counters = {0};
@@ -1249,15 +1250,15 @@ static const struct cnt_ctrl cnt_ctrl_array[MAX_CTRL_CNT] = {
 		.cmd = PONFW_TWDM_LODS_COUNTERS_CMD_ID,
 		.lenr = 0,
 		.len = PONFW_TWDM_LODS_COUNTERS_LEN,
-		.init_fp = twdm_lods_counters_init,
+		.init_fp = pon_lods_counters_init,
 		.update_fp = twdm_lods_counters_update,
 		.last_update_fp = pon_mbox_cnt_twdm_lods_last_update_update,
 	},
 	[TWDM_OPTIC_PL_CNT] = {
 		.ctrl_aux_idx = NONE_CNT,
-		.cmd = PONFW_ONU_OPTIC_PL_COUNTERS_CMD_ID,
+		.cmd = PONFW_TWDM_ONU_OPTIC_PL_COUNTERS_CMD_ID,
 		.lenr = 0,
-		.len = PONFW_ONU_OPTIC_PL_COUNTERS_LEN,
+		.len = PONFW_TWDM_ONU_OPTIC_PL_COUNTERS_LEN,
 		.init_fp = twdm_optic_pl_counters_init,
 		.update_fp = twdm_optic_pl_counters_update,
 		.last_update_fp = twdm_optic_pl_last_update_update,
@@ -1441,7 +1442,7 @@ typedef union pon_cnt *(twdm_counter_table_get)(u8 dswlch_id,
  * @param[in] table_get_fct Table get function to get the requested table.
  *
  */
-void generic_twdm_counter_table_get(u8 dswlch_id,
+static void generic_twdm_counter_table_get(u8 dswlch_id,
 				    union pon_cnt *cnt,
 				    struct pon_mbox *pon_mbox_dev,
 				    unsigned long table_size,

@@ -48,7 +48,7 @@ struct ltq_pon_net_hw {
 	/** IP Port owner on URX */
 	struct module *ipp_owner;
 	/* true when the system is in O5 or O6 */
-	bool in_o5;
+	atomic_t in_o5;
 	const struct ltq_pon_net_soc_data *soc_data;
 	struct list_head pmapper_list;
 	struct list_head tcont_list;
@@ -94,9 +94,6 @@ static inline void ltq_pon_net_set_skd_dw(struct sk_buff *skb,
 }
 
 extern dp_cb_t ltq_pon_net_dp_cb;
-
-/** The hardware interface open callback. */
-int ltq_pon_net_mdev_open(struct net_device *hw_ndev);
 
 /** Registers the port in DP manager based on given mode. */
 int ltq_pon_net_register_dp_port(struct ltq_pon_net_hw *hw, enum pon_mode mode);
