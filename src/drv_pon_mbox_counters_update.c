@@ -200,7 +200,7 @@ static bool is_ngpon2_mode(struct pon_mbox *pon_mbox_dev)
 		return 1;
 
 	return 0;
-};
+}
 
 static bool need_ngpon2_update(struct pon_mbox *pon_mbox_dev, u8 twdm_dswlch_id)
 {
@@ -1347,7 +1347,7 @@ static int generic_counters_update(enum counter_type cnt_index,
 	/* Data of two identical type fields (prime, aux), each consists of
 	 * in,out, to be passed to primary and auxiliary pon_mbox_send()
 	 */
-	struct ponfw_cnt_io_grp cnt_io_grp = {0,};
+	struct ponfw_cnt_io_grp cnt_io_grp = {0};
 	/* Pointer to the primary table element where counter-specific
 	 * parameters are stored for primary pon_mbox_send() call
 	 */
@@ -1455,7 +1455,7 @@ static void generic_twdm_counter_table_get(u8 dswlch_id,
 		return;
 
 	counters = table_get_fct(dswlch_id, pon_mbox_dev->cnt_state);
-	if (cnt)
+	if (cnt && counters)
 		memcpy(cnt, counters, table_size);
 }
 

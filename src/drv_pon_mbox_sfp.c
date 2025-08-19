@@ -13,7 +13,9 @@
  */
 
 #include <linux/device.h>
+#include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
+#include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -32,7 +34,16 @@ struct eeprom {
 
 struct pon_sfp_priv {
 	struct eeprom eep[MAX_SFP_EEPROM];
+	/* kernel objects for hotplug events */
+	struct kset *kset;
+	struct kobject kobj;
+	/* optional gpio for hotplug detection */
+	struct gpio_desc *gpio_mod_def_0;
+	/* irq number for selected gpio */
+	int gpio_irq_mod_def_0;
 };
+
+#define to_sfp_obj(x) container_of(x, struct pon_sfp_priv, kobj)
 
 static struct pon_sfp_priv *g_sfp_priv;
 
@@ -187,9 +198,88 @@ static void remove_eep_file(struct pon_mbox *pon, struct eeprom *eeprom)
 	kfree(eeprom->bin.attr.name);
 }
 
+static int send_sfp_hotplug_event(struct pon_mbox *pon, int state)
+{
+	struct pon_sfp_priv *sfp_priv = pon->sfp;
+
+	kobject_uevent(&sfp_priv->kobj, state ? KOBJ_ONLINE : KOBJ_OFFLINE);
+
+	return 0;
+}
+
+static irqreturn_t moddef0_irq_handler(int irq, void *data)
+{
+	struct pon_mbox *pon = data;
+	struct pon_sfp_priv *sfp_priv = pon->sfp;
+	int v;
+
+	v = gpiod_get_value_cansleep(sfp_priv->gpio_mod_def_0);
+
+	dev_dbg(pon->dev, "irq %d: mod-def0 changed to %d\n", irq, v);
+	send_sfp_hotplug_event(pon, v);
+
+	return IRQ_HANDLED;
+}
+
+static int moddef0_register(struct pon_mbox *pon, struct device_node *np)
+{
+	struct pon_sfp_priv *sfp_priv = pon->sfp;
+	struct gpio_desc *gpiod;
+	int gpio_irq;
+	int ret;
+
+	gpiod = devm_fwnode_gpiod_get(pon->dev, of_fwnode_handle(np),
+				      "mod-def0", GPIOD_IN, "pon-sfp-mod-def0");
+	if (IS_ERR_OR_NULL(gpiod)) {
+		ret = PTR_ERR_OR_ZERO(gpiod);
+		if (ret == -ENOENT)
+			return 0;
+		dev_err(pon->dev, "Request failed for mod-def0 GPIO: %d\n",
+			ret);
+		return ret;
+	}
+
+	gpio_irq = gpiod_to_irq(gpiod);
+	if (gpio_irq < 0) {
+		dev_err(pon->dev, "no irq possible for mod-def0 (%d)\n",
+			gpio_irq);
+		devm_gpiod_put(pon->dev, gpiod);
+		return gpio_irq;
+	}
+
+	ret = devm_request_threaded_irq(
+		pon->dev, gpio_irq, NULL, moddef0_irq_handler,
+		IRQF_ONESHOT | IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
+		"pon-sfp-mod-def0", pon);
+	if (ret) {
+		dev_warn(pon->dev,
+			 "requesting irq for mod-def0 failed with %d\n", ret);
+		devm_gpiod_put(pon->dev, gpiod);
+		return ret;
+	}
+
+	sfp_priv->gpio_mod_def_0 = gpiod;
+	sfp_priv->gpio_irq_mod_def_0 = gpio_irq;
+	return 0;
+}
+
+static void sfp_release(struct kobject *kobj)
+{
+	struct pon_sfp_priv *sfp_priv;
+
+	pr_debug("sfp-release %p\n", kobj);
+
+	sfp_priv = to_sfp_obj(kobj);
+	kfree(sfp_priv);
+}
+
+static struct kobj_type sfp_ktype = {
+	.release = &sfp_release,
+};
+
 int pon_sfp_probe(struct pon_mbox *pon, struct device_node *np)
 {
-	struct device_node *sfp_node, *tmp_node;
+	struct device_node *sfp_node, *tmp_node, *moddef_node;
 	struct i2c_adapter *adapter;
 	struct i2c_client *client;
 	struct pon_sfp_priv *sfp_priv;
@@ -201,6 +291,7 @@ int pon_sfp_probe(struct pon_mbox *pon, struct device_node *np)
 		dev_warn(pon->dev, "No sfp node found\n");
 		return -ENODEV;
 	}
+	moddef_node = sfp_node;
 
 	if (of_device_is_compatible(sfp_node, "sff,sff") ||
 	    of_device_is_compatible(sfp_node, "sff,sfp")) {
@@ -222,9 +313,11 @@ int pon_sfp_probe(struct pon_mbox *pon, struct device_node *np)
 	if (!adapter)
 		return -ENODEV;
 
-	sfp_priv = kzalloc(sizeof(*sfp_priv), GFP_KERNEL);
+	sfp_priv = devm_kzalloc(pon->dev, sizeof(*sfp_priv), GFP_KERNEL);
 	if (!sfp_priv)
 		return -ENOMEM;
+
+	pon->sfp = sfp_priv;
 
 	for (i = 0; i < MAX_SFP_EEPROM; i++) {
 #if (KERNEL_VERSION(5, 3, 0) <= LINUX_VERSION_CODE)
@@ -241,7 +334,8 @@ int pon_sfp_probe(struct pon_mbox *pon, struct device_node *np)
 		}
 #endif
 
-		if (!try_module_get(client->dev.driver->owner)) {
+		if (!client->dev.driver ||
+		    !try_module_get(client->dev.driver->owner)) {
 			i2c_unregister_device(client);
 			ret = -ENOENT;
 			goto err;
@@ -256,12 +350,25 @@ int pon_sfp_probe(struct pon_mbox *pon, struct device_node *np)
 			goto err;
 		}
 	}
-	pon->sfp = sfp_priv;
+
+	/* "kset" is used as SUBSYSTEM in hotplug calls */
+	sfp_priv->kset = kset_create_and_add("pon-sfp", NULL, &pon->dev->kobj);
+	if (sfp_priv->kset) {
+		sfp_priv->kobj.kset = sfp_priv->kset;
+
+		ret = kobject_init_and_add(&sfp_priv->kobj, &sfp_ktype,
+					   &pon->dev->kobj, "sfp%d", 0);
+	}
+
+	moddef0_register(pon, moddef_node);
+
 	if (!g_sfp_priv)
 		g_sfp_priv = sfp_priv;
 	return 0;
 
 err:
+	kobject_put(&sfp_priv->kobj);
+
 	for (i = 0; i < MAX_SFP_EEPROM; i++) {
 		client = sfp_priv->eep[i].client;
 		if (!client)
@@ -271,28 +378,34 @@ err:
 		i2c_unregister_device(client);
 		sfp_priv->eep[i].client = NULL;
 	}
-	kfree(sfp_priv);
+	/* No need to call devm_kfree for devm-managed memory */
 
 	return ret;
 }
 
 void pon_sfp_remove(struct pon_mbox *pon)
 {
+	struct pon_sfp_priv *sfp_priv = pon->sfp;
 	struct i2c_client *client;
 	int i;
 
-	if (!pon->sfp)
+	if (!sfp_priv)
 		return;
 
+	kobject_put(&sfp_priv->kobj);
+
+	if (sfp_priv->gpio_irq_mod_def_0)
+		devm_free_irq(pon->dev, sfp_priv->gpio_irq_mod_def_0, pon);
+
 	for (i = 0; i < MAX_SFP_EEPROM; i++) {
-		client = pon->sfp->eep[i].client;
+		client = sfp_priv->eep[i].client;
 		if (!client)
 			continue;
-		remove_eep_file(pon, &pon->sfp->eep[i]);
+		remove_eep_file(pon, &sfp_priv->eep[i]);
 		module_put(client->dev.driver->owner);
 		i2c_unregister_device(client);
 	}
-	kfree(pon->sfp);
-	if (g_sfp_priv == pon->sfp)
+	devm_kfree(pon->dev, sfp_priv);
+	if (g_sfp_priv == sfp_priv)
 		g_sfp_priv = NULL;
 }

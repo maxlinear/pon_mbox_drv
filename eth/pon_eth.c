@@ -1792,7 +1792,7 @@ static uint8_t ltq_pon_net_dp_domain_get(struct ltq_pon_net_gem *gem)
 	}
 
 	netdev_dbg(gem->ndev, "GEM Unicast domain: %d\n",
-		   DP_BR_DM_UC);
+		   DP_BR_DM_UCA);
 	return DP_BR_DM_UCA;
 }
 
@@ -2027,7 +2027,7 @@ static u16 ltq_pon_net_gem_idx_preassign(struct ltq_pon_net_gem *gem)
 
 	/* GEM Index 0 is used by OMCI channel, so skip it */
 	for (i = 1; i < ARRAY_SIZE(g_gem_idx_used); i++) {
-		if (g_gem_idx_used[i] == true)
+		if (g_gem_idx_used[i])
 			continue;
 
 		g_gem_idx_used[i] = true;
@@ -2735,7 +2735,8 @@ static int ltq_pon_net_gem_newlink(struct net *src_net,
 	/* Call it again to also apply the T-Cont */
 	err = ltq_pon_net_gem_fw_apply(gem, gem->tcont);
 	if (err) {
-		netdev_err(gem_ndev, "Update PON FW failed: %i", err);
+		netdev_err(gem_ndev, "%s: Update PON FW failed: %i", __func__,
+			   err);
 		goto err_gem_unlink;
 	}
 
@@ -2813,7 +2814,8 @@ static int ltq_pon_net_gem_changelink(struct net_device *gem_ndev,
 
 	err = ltq_pon_net_gem_fw_apply(gem, gem->tcont);
 	if (err)
-		netdev_err(gem_ndev, "Update PON FW failed: %i", err);
+		netdev_err(gem_ndev, "%s: Update PON FW failed: %i", __func__,
+			   err);
 
 	return err;
 }
@@ -3051,7 +3053,7 @@ static void ltq_pon_net_qos_idx_free(struct net_device *tcont_ndev)
 {
 	struct ltq_pon_net_tcont *tcont = netdev_priv(tcont_ndev);
 
-	/* If QOS Index was set to OMCI channel value 0, skip it */
+	/* QOS Index 0 is reserved for the OMCI channel, so skip freeing it */
 	if (!tcont->qos_idx) {
 		netdev_dbg(tcont_ndev,
 			   "QOS Index free skipped for Alloc id (%u)\n",
@@ -3473,6 +3475,9 @@ static void ltq_pon_net_tcont_dellink(struct net_device *tcont_ndev,
 	dev_put(hw->ndev);
 }
 
+/**
+ * Returns the maximum number of TX queues supported per T-CONT.
+ */
 static unsigned int ltq_pon_net_tcont_get_num_tx_queues(void)
 {
 	return PON_TCONT_TX_QUEUES;
@@ -3760,9 +3765,17 @@ static int ltq_pon_net_pmapper_fill_info(struct sk_buff *skb,
 	return 0;
 }
 
-/** This is called to configure the newly created IEEE 802.1p mapper interface.
- * The interface itself is created by the Linux stack this just does the
- * IEEE 802.1p mapper specific initial configuration.
+/**
+ * Initializes the IEEE 802.1p mapper interface with default configuration.
+ *
+ * This function is invoked after the Linux networking stack creates a new
+ * IEEE 802.1p mapper interface. It performs the initial setup specific to
+ * the 802.1p mapper, such as configuring QoS parameters, VLAN priorities,
+ * and any other required settings to ensure correct operation of the
+ * interface according to IEEE 802.1p standards.
+ *
+ * Note: The actual creation of the interface is handled by the Linux kernel.
+ * This function should only be used for post-creation configuration.
  */
 static void ltq_pon_net_pmapper_setup(struct net_device *pmapper_ndev)
 {
@@ -3778,7 +3791,11 @@ static void ltq_pon_net_pmapper_setup(struct net_device *pmapper_ndev)
 	pmapper_ndev->priv_destructor = free_netdev;
 #endif
 
-	pmapper_ndev->needed_headroom = DP_MAX_PMAC_LEN;
+	if (pmapper->hw && pmapper->hw->soc_data &&
+	    pmapper->hw->soc_data->pmac_remove)
+		pmapper_ndev->needed_headroom = DP_MAX_PMAC_LEN;
+	else
+		pmapper_ndev->needed_headroom = 0;
 
 	eth_hw_addr_random(pmapper_ndev);
 
@@ -4538,34 +4555,54 @@ static struct platform_driver ltq_pon_net_driver = {
 	},
 };
 
+/**
+ * ltq_pon_net_driver_init - Module initialization with error handling and
+ * cleanup order
+ *
+ * This function registers all rtnl_link_ops and other subsystems in a
+ * specific order. If any registration fails, it performs cleanup in the
+ * reverse order of successful registrations. The cleanup order is important:
+ * each error label undoes only what was successfully registered up to that
+ * point. This ensures that no resources are leaked and that the system
+ * remains in a consistent state.
+ */
 static int __init ltq_pon_net_driver_init(void)
 {
 	int ret;
 
+	/* Register the main PON device rtnl_link_ops first */
 	ret = rtnl_link_register(&pon_net_pon_cfg_rtnl);
 	if (ret)
 		return ret;
 
+	/* Register the pmapper rtnl_link_ops */
 	ret = rtnl_link_register(&ltq_pon_net_pmapper_rtnl);
 	if (ret)
 		goto err_pon_rtnl;
 
+	/* Register the tcont rtnl_link_ops */
 	ret = rtnl_link_register(&ltq_pon_net_tcont_rtnl);
 	if (ret)
 		goto err_pmapper_rtnl;
 
+	/* Register the gem rtnl_link_ops */
 	ret = rtnl_link_register(&ltq_pon_net_gem_rtnl);
 	if (ret)
 		goto err_tcont_rtnl;
 
+	/* Register the iphost rtnl_link_ops */
 	ret = pon_eth_iphost_rtnl_link_register();
 	if (ret)
 		goto err_gem_rtnl;
 
+	/* Register the netdevice notifier for device events */
 	ret = register_netdevice_notifier(&ltq_pon_net_notifier_block);
 	if (ret < 0)
 		goto err_iphost_rtnl;
 
+	/* Register mailbox callbacks for PLOAM state, alloc_id link/unlink,
+	 * and mode events
+	 */
 	pon_mbox_ploam_state_callback_func_register(
 					ltq_pon_net_ploam_state_event);
 	pon_mbox_alloc_id_link_callback_register(
@@ -4575,12 +4612,14 @@ static int __init ltq_pon_net_driver_init(void)
 
 	pon_mbox_mode_callback_register(ltq_pon_net_mode_event);
 
+	/* Register the platform driver last */
 	ret = platform_driver_register(&ltq_pon_net_driver);
 	if (ret)
 		goto err_notifier;
 
 	return 0;
 
+	/* Cleanup in reverse order of registration on error */
 err_notifier:
 	pon_mbox_mode_callback_register(NULL);
 	pon_mbox_alloc_id_unlink_callback_register(NULL);
@@ -4619,6 +4658,10 @@ static void __exit ltq_pon_net_driver_exit(void)
 	 * struct ltq_pon_net_hw through hw pointer, therefore we must
 	 * unregister the PON IP hardware after cleanup was done, so that
 	 * elements of struct ltq_pon_net_hw are still valid.
+	 *
+	 * The cleanup order here is the reverse of the initialization order in
+	 * ltq_pon_net_driver_init(), ensuring that each resource is released
+	 * only after all dependent resources have been cleaned up.
 	 */
 	platform_driver_unregister(&ltq_pon_net_driver);
 
@@ -4629,7 +4672,10 @@ static void __exit ltq_pon_net_driver_exit(void)
 	 * of given type and call struct rtnl_link_ops->dellink(), and it is not
 	 * implemented for pon device. Therefore we must call
 	 * rtnl_link_unregister() when no pon device exists - i.e. after
-	 * platform_driver_unregister()
+	 * platform_driver_unregister().
+	 *
+	 * See the initialization order in ltq_pon_net_driver_init() for
+	 * details.
 	 */
 	rtnl_link_unregister(&pon_net_pon_cfg_rtnl);
 }

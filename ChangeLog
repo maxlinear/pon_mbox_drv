@@ -1,5 +1,33 @@
 NEXT VERSION
 
+v1.27.2 2025.07.03
+
+- PONRTSYS-14792: pon driver cleanup regarding kernel APIs
+- PONRTSYS-14792: Fix various issues in pon_mbox driver
+  + Clarify SerDes config index usage, invert chiptop check, and correct
+    pinctrl error handling.
+- PONRTSYS-14792: Refactor pon_sfp_probe function for improved readability and maintainability
+- PONRTSYS-14792: Enhance error handling and code clarity in PON mailbox driver counters
+  + Added null checks in process_acc_counter and related functions to prevent
+  + dereferencing null pointers.
+  + Replaced compile-time checks with runtime checks for GEM port index
+    validation in multiple functions.
+  + Improved comments for clarity and understanding in counters conversion
+    and update functions.
+- PONRTSYS-14792: Fix checksum handling and improve device validation in eth driver
+- PONRTSYS-14792: Cleanups in PON PTP driver
+  + Make ptp_list static and improve error handling in pon_ptp_remove function.
+  + Add documentation for pon_ptp_priv structure.
+  + Support compilation for kerenel > 6.2, where .adjfreq is removed from
+    struct ptp_clock_info
+
+v1.27.1 2025.06.11
+
+- PONRTSYS-14754: Implement pon driver optical SFP stick detection using hotplug events
+- PONRTSYS-14760: Fix allocation bandwidth reporting.
+  + Bypass accumulation logic for "us_bw" parameter within
+    "pon acg" command and instead treat it as per wavelength specific value.
+
 v1.27.0 2025.04.29
 
 - PONRTSYS-14752: Implement link status reporting for pon0 netdev

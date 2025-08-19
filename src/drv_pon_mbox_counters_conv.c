@@ -8,8 +8,8 @@
  *
  *****************************************************************************/
 
-#include "drv_pon_mbox_counters_conv.h"
 #include <linux/errno.h>
+#include "drv_pon_mbox_counters_conv.h"
 #include "drv_pon_mbox.h"
 
 int pon_mbox_cnt_gtc_fw2pon(struct ponfw_gtc_counters *in,
@@ -235,8 +235,10 @@ int pon_mbox_cnt_tx_eth_fw2pon(struct ponfw_tx_eth_counters *in,
 	    (__u64)in->tx_eth_fr_lt1k5_hi << 32 | in->tx_eth_fr_lt1k5_lo;
 	out->frames_gt_1518 =
 	    (__u64)in->tx_eth_fr_gt1k5_hi << 32 | in->tx_eth_fr_gt1k5_lo;
-	/* These counters are not relevant in TX direction and should be set
-	 * to 0.
+	/* The following counters are only applicable for RX direction.
+	 * Since this function handles TX direction, these fields are set to 0
+	 * to indicate that FCS errors, FCS error bytes, and frames too long
+	 * are not counted or relevant for transmitted frames.
 	 */
 	out->frames_fcs_err = 0;
 	out->bytes_fcs_err = 0;
@@ -283,11 +285,18 @@ int pon_mbox_cnt_twdm_tc_fw2pon(
 			struct pon_mbox_twdm_tc_counters *out)
 {
 	unsigned int i = 0;
+	unsigned int min_size;
 
 	if (!in || !out)
 		return -EINVAL;
 
-	for (i = 0; i < ARRAY_SIZE(out->tc_); i++)
+	min_size = ARRAY_SIZE(out->tc_);
+
+	/* Ensure we do not read out of bounds from in->tc_ */
+	if (ARRAY_SIZE(in->tc_) < min_size)
+		min_size = ARRAY_SIZE(in->tc_);
+
+	for (i = 0; i < min_size; i++)
 		out->tc_[i] = (__u64)in->tc_[i];
 
 	return 0;

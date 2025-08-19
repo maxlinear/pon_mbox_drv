@@ -423,7 +423,7 @@ static int skb_send_copy(struct sk_buff *skb,
 	iphost_skb->protocol = eth_type_trans(iphost_skb, ndev);
 
 	if (ndev->features & NETIF_F_RXCSUM)
-		skb->ip_summed = CHECKSUM_UNNECESSARY;
+		iphost_skb->ip_summed = CHECKSUM_UNNECESSARY;
 
 	netif_rx(iphost_skb);
 	stats->rx_packets++;
@@ -489,7 +489,7 @@ static int32_t iphost_dp_rx(struct net_device *ndev,
 		return -1;
 	}
 
-	if (rdev->netdev_ops->ndo_open != &iphost_open) {
+	if (!rdev->netdev_ops || rdev->netdev_ops->ndo_open != &iphost_open) {
 		netdev_err(rdev, "received data on unknown device\n");
 		dev_kfree_skb_any(skb);
 		return -1;

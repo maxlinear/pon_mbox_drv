@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2020 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2020 - 2025 MaxLinear, Inc.
  * Copyright (c) 2017 - 2020 Intel Corporation
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
@@ -32,6 +32,7 @@
 #include <linux/err.h>
 #include <linux/firmware.h>
 #include <linux/interrupt.h>
+#include <linux/io.h>
 #include <linux/iopoll.h>
 #include <linux/kernel.h>
 #include <linux/math64.h>
@@ -2944,6 +2945,9 @@ static int pon_mbox_genl_serdes_config(struct sk_buff *skb,
 	if (!pon->soc_spec->serdes_init || pon->mode == PON_MODE_AON)
 		return 0;
 
+	/* Index 0 is intentionally unused; SerDes config parameters start from
+	 * index 1
+	 */
 	for (i = 1; i <= PON_MBOX_SRDS_MAX; i++) {
 		if (attrs[i]) {
 			switch (serdes_config_genl_policy[i].type) {
@@ -3197,7 +3201,7 @@ static int pon_uart_config_set(struct pon_mbox *pon,
 #if !defined(CONFIG_X86_INTEL_LGM) && !defined(CONFIG_SOC_LGM)
 	unsigned int val;
 
-	if (pon->chiptop) {
+	if (!pon->chiptop) {
 		dev_err(pon->dev, "chiptop-syscon not available\n");
 		return -EFAULT;
 	}
@@ -3356,7 +3360,7 @@ static int pon_mbox_bit_error_reply(struct sk_buff *skb, struct genl_info *info,
 					PON_MBOX_A_BITERR_PAD);
 	if (!ret && time)
 		ret = nla_put_u32(skb, PON_MBOX_A_BITERR_TIME, *time);
-	if (!ret && time)
+	if (!ret && counter_status)
 		ret = nla_put_u8(skb, PON_MBOX_A_BITERR_STATUS,
 				 *counter_status);
 
@@ -5610,6 +5614,21 @@ static int pon_mbox_pdev_request_irq(struct pon_mbox *pon, const char *name)
 	return irq;
 }
 
+/* Local variant of "pon_devm_platform_ioremap_resource_byname"
+ * which avoids an error printout if the resource is not found in device-tree.
+ */
+static void __iomem *
+pon_devm_platform_ioremap_resource_byname(struct platform_device *pdev,
+					  const char *name)
+{
+	struct resource *res;
+
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, name);
+	if (!res)
+		return IOMEM_ERR_PTR(-ENOENT);
+	return devm_ioremap_resource(&pdev->dev, res);
+}
+
 /**
  * This function does the memory mapped specific init for one device.
  */
@@ -5618,7 +5637,6 @@ static int pon_mbox_pdev_probe(struct platform_device *pdev)
 	struct pon_mbox *pon;
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev_of_node(dev);
-	struct resource *res;
 	const struct pon_soc_data *soc_data = NULL;
 	struct device *mbox_char_dev;
 	int ret;
@@ -5639,58 +5657,38 @@ static int pon_mbox_pdev_probe(struct platform_device *pdev)
 	}
 	pon->soc_spec = soc_data;
 
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "ponip");
-	if (!res)
-		return -ENXIO;
-
-	pon->regbase = devm_ioremap_resource(dev, res);
+	pon->regbase = pon_devm_platform_ioremap_resource_byname(pdev, "ponip");
 	if (IS_ERR(pon->regbase))
 		return PTR_ERR(pon->regbase);
 
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "serdes");
-	if (res) {
-		pon->serdes = devm_ioremap_resource(dev, res);
-		if (IS_ERR(pon->serdes))
-			/* Can fail if already used for AON.
-			 * Continue as those registers are not used in
-			 * case of AON.
-			 */
-			pon->serdes = NULL;
-	} else {
+	pon->serdes = pon_devm_platform_ioremap_resource_byname(pdev, "serdes");
+	if (IS_ERR(pon->serdes))
+		/* Can fail if already used for AON.
+		 * Continue as those registers are not used in
+		 * case of AON.
+		 */
 		pon->serdes = NULL;
-	}
 
 	if (pon->serdes) {
-		res = platform_get_resource_byname(pdev,
-						   IORESOURCE_MEM,
-						   "serdes_sram");
-		if (res) {
-			pon->serdes_sram = devm_ioremap_resource(dev, res);
-			if (IS_ERR(pon->serdes_sram))
+		pon->serdes_sram = pon_devm_platform_ioremap_resource_byname(
+			pdev, "serdes_sram");
+		if (IS_ERR(pon->serdes_sram)) {
+			if (PTR_ERR(pon->serdes_sram) == -ENOENT)
+				pon->serdes_sram = NULL;
+			else
 				return PTR_ERR(pon->serdes_sram);
-		} else {
-			pon->serdes_sram = NULL;
 		}
 	}
 
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "pon_app");
-	if (res) {
-		pon->pon_app = devm_ioremap_resource(dev, res);
-		if (IS_ERR(pon->pon_app))
-			return PTR_ERR(pon->pon_app);
-	} else {
-		pon->pon_app = NULL;
-	}
+	pon->pon_app =
+		pon_devm_platform_ioremap_resource_byname(pdev, "pon_app");
+	if (IS_ERR(pon->pon_app))
+		return PTR_ERR(pon->pon_app);
 
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
-					   "pon_apb_app");
-	if (res) {
-		pon->pon_apb_app = devm_ioremap_resource(dev, res);
-		if (IS_ERR(pon->pon_apb_app))
-			return PTR_ERR(pon->pon_apb_app);
-	} else {
-		pon->pon_apb_app = NULL;
-	}
+	pon->pon_apb_app =
+		pon_devm_platform_ioremap_resource_byname(pdev, "pon_apb_app");
+	if (IS_ERR(pon->pon_apb_app))
+		return PTR_ERR(pon->pon_apb_app);
 
 	pon->reset_wanss = devm_reset_control_get_optional_shared(dev, "wanss");
 	if (IS_ERR(pon->reset_wanss)) {
@@ -5775,11 +5773,9 @@ static int pon_mbox_pdev_probe(struct platform_device *pdev)
 	/* Optional locking of FW download on URX800.
 	 * FW can only be downloaded once
 	 */
-	pon->sectop = syscon_regmap_lookup_by_phandle(np,
-						      "intel,sectop-syscon");
-	if (PTR_ERR(pon->sectop) == -ENODEV) {
-		pon->sectop = NULL;
-	} else if (IS_ERR(pon->sectop)) {
+	pon->sectop = syscon_regmap_lookup_by_phandle_optional(
+		np, "intel,sectop-syscon");
+	if (IS_ERR(pon->sectop)) {
 		dev_err(dev, "failed to get intel,sec_top phandle: %li\n",
 			PTR_ERR(pon->sectop));
 		return PTR_ERR(pon->sectop);
@@ -6002,8 +5998,8 @@ static int pinselect_probe(struct platform_device *pdev)
 		return -ENODEV;
 
 	*pinctrl = devm_pinctrl_get(&pdev->dev);
-	if (IS_ERR(pinctrl))
-		return PTR_ERR(pinctrl);
+	if (IS_ERR(*pinctrl))
+		return PTR_ERR(*pinctrl);
 
 	dev_dbg(&pdev->dev, "pinselect %p stored for %p\n", *pinctrl, pinctrl);
 	return 0;

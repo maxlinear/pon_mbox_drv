@@ -1,5 +1,4 @@
-
-export PACKAGE_VERSION=1.27.0
+export PACKAGE_VERSION=1.27.2
 PACKAGE=pon_mbox_drv
 
 ifneq ($(KERNELRELEASE),)
@@ -32,7 +31,7 @@ check-style:
 
 distcheck: dist
 
-PACKAGE_EXCLUDE=^scripts/|^unit_tests|^build_unit_tests|^build_win32
+PACKAGE_EXCLUDE=^(scripts/|unit_tests/|build_unit_tests/|build_win32/)
 
 dist:
 	git ls-tree -r HEAD --name-only | \

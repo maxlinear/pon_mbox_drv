@@ -19,14 +19,14 @@
 
 #include <linux/device.h>
 #include <linux/list.h>
-#include <linux/module.h>
 #include <linux/mod_devicetable.h>
+#include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/ptp_clock_kernel.h>
+#include <linux/version.h>
 
 #include <pon/pon_ip_msg.h>
 #include <pon/pon_mbox_ikm.h>
-
 
 /* GPON/XGPON1/XGSPON/NGPON2:
  *       31104 clocks == 100000 ns
@@ -42,6 +42,18 @@
 #define INVALID_EXTTS_SYNCE 0xFFFFFFFFFFFFFFFF
 #define INVALID_EXTTS_NOSYNCE 0xFFFFFFFFFFFFFFFE
 
+/**
+ * struct pon_ptp_priv - Private data structure for PON PTP driver
+ *
+ * This structure holds the private context and state information required
+ * by the PON (Passive Optical Network) Precision Time Protocol (PTP) driver.
+ * It is used internally by the driver to manage PTP-related operations,
+ * configuration, and runtime data.
+ *
+ * Members of this structure typically include hardware handles, configuration
+ * parameters, synchronization primitives, and any other data necessary for
+ * the correct operation of the PTP functionality within the PON subsystem.
+ */
 struct pon_ptp_priv {
 	/* Linux platform device */
 	struct platform_device *pdev;
@@ -60,7 +72,7 @@ struct pon_ptp_priv {
 };
 
 /* A list of created PTP device instances */
-LIST_HEAD(ptp_list);
+static LIST_HEAD(ptp_list);
 
 /* PTP clock name index counter */
 static int ptp_instance;
@@ -139,9 +151,22 @@ static int pon_ptp_verify(struct ptp_clock_info *ptp, unsigned int pin,
 }
 
 /*
- * freq_adjust function not supported
+ * adjfine function not supported
  */
-static int pon_ptp_freq_adjust(struct ptp_clock_info *ptp, int32_t delta)
+static int __maybe_unused pon_ptp_adjust_fine(struct ptp_clock_info *ptp,
+					      long scaled_ppm)
+{
+	/* The PON PTP does not support frequency adjustment.
+	 * 0 is returned as a workaround to suppress phc2sys warnings.
+	 */
+	return 0;
+}
+
+/*
+ * adjfreq function not supported
+ */
+static int __maybe_unused pon_ptp_adjust_freq(struct ptp_clock_info *ptp,
+					      int32_t delta)
 {
 	/* The PON PTP does not support frequency adjustment.
 	 * 0 is returned as a workaround to suppress phc2sys warnings.
@@ -249,7 +274,12 @@ static const struct ptp_clock_info pon_ptp_clock_info = {
 	.n_ext_ts	= 1,
 	.n_per_out	= 0,
 	.pps		= 0,
-	.adjfreq	= pon_ptp_freq_adjust,
+#if (KERNEL_VERSION(4, 10, 0) < LINUX_VERSION_CODE)
+	.adjfine	= pon_ptp_adjust_fine,
+#endif
+#if (KERNEL_VERSION(6, 2, 0) >= LINUX_VERSION_CODE)
+	.adjfreq	= pon_ptp_adjust_freq,
+#endif
 	.adjtime	= pon_ptp_time_adjust,
 	.gettime64	= pon_ptp_time_get,
 	.settime64	= pon_ptp_time_set,
@@ -350,8 +380,7 @@ static int pon_ptp_probe(struct platform_device *pdev)
 	struct pon_ptp_priv *ctx;
 	struct device *dev = &pdev->dev;
 
-	/* Allocate memory for private PTP device data.
-	 */
+	/* Allocate memory for private PTP device data. */
 	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
@@ -377,7 +406,6 @@ static int pon_ptp_probe(struct platform_device *pdev)
 	}
 
 	/* Add created PTP instance to the list. */
-	INIT_LIST_HEAD(&ctx->ptp_inst);
 	list_add(&ctx->ptp_inst, &ptp_list);
 
 	return 0;
@@ -386,11 +414,13 @@ static int pon_ptp_probe(struct platform_device *pdev)
 static int pon_ptp_remove(struct platform_device *pdev)
 {
 	struct pon_ptp_priv *ctx = platform_get_drvdata(pdev);
+	int err;
 
-	/* Disable automatic generation of TOD_SYNC messages
-	 * by the PONIP.
-	 */
-	pon_ptp_monitor_config(PPS_TIME_DIS);
+	/* Disable automatic generation of TOD_SYNC messages by the PONIP. */
+	err = pon_ptp_monitor_config(PPS_TIME_DIS);
+	if (err)
+		dev_err(&pdev->dev, "Disabling pps time report failed: %i\n",
+			err);
 
 	/* Unregister the PTP clock */
 	if (ctx->ptp_clock) {
@@ -399,7 +429,7 @@ static int pon_ptp_remove(struct platform_device *pdev)
 			ctx->ptp_clk_info.name);
 		ctx->ptp_clock = NULL;
 	}
-	list_del(&ctx->ptp_inst);
+	list_del_init(&ctx->ptp_inst);
 
 	return 0;
 }
@@ -447,8 +477,8 @@ static void __exit pon_ptp_driver_exit(void)
 	/* Unregister the callback function at pon_mbox driver for
 	 * TOD_SYNC automessages from PONIP with 1PPS timestamps.
 	 */
-	pon_mbox_pps_callback_register((void *)NULL);
-	pon_mbox_pps_psc_callback_register((void *)NULL);
+	pon_mbox_pps_callback_register(NULL);
+	pon_mbox_pps_psc_callback_register(NULL);
 
 	platform_driver_unregister(&pon_ptp_driver);
 }

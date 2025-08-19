@@ -34,6 +34,9 @@ static inline void process_acc_counter(__u64 *dst, __u64 *fw_response,
 				       __u64 *last, __u64 max_bits,
 				       __u64 *acc)
 {
+	if (!dst || !fw_response || !last || !acc)
+		return;
+
 	if (*last <= *fw_response) {
 		*dst += *fw_response - *last;
 		*acc += *fw_response - *last;
@@ -175,9 +178,9 @@ static inline void process_acc_counter_t(__u64 *dst, __u64 *fw_response,
 
 int pon_mbox_cnt_gem_port_add(u8 index, struct counters_state *state)
 {
-#if GEM_PORTS_MAX < 255
-#error "Implement run-time checks for GEM port index"
-#endif
+	if (index >= GEM_PORTS_MAX)
+		return -EINVAL;
+
 	mutex_lock(&state->lock);
 
 	if (state->gem_ports_used[index]) {
@@ -194,9 +197,9 @@ int pon_mbox_cnt_gem_port_add(u8 index, struct counters_state *state)
 
 int pon_mbox_cnt_gem_port_del(u8 index, struct counters_state *state)
 {
-#if GEM_PORTS_MAX < 255
-#error "Implement run-time checks for GEM port index"
-#endif
+	if (index >= GEM_PORTS_MAX)
+		return -EINVAL;
+
 	mutex_lock(&state->lock);
 
 	if (!state->gem_ports_used[index]) {
@@ -384,11 +387,11 @@ struct pon_mbox_gem_port_counters
 *pon_mbox_cnt_gem_port_table_get(u8 twdm_dswlch_id, u8 index,
 				 struct counters_state *state)
 {
-#if GEM_PORTS_MAX < 255
-#error "Implement run-time checks for GEM port index"
-#endif
 	u8 dswlch_id, uswlch_id;
 	struct pon_mbox_gem_port_counters *ptr;
+
+	if (index >= GEM_PORTS_MAX)
+		return NULL;
 
 	mutex_lock(&state->lock);
 
@@ -425,9 +428,9 @@ int pon_mbox_cnt_gem_port_table_add(u8 index,
 	if (!cnt)
 		return -EINVAL;
 
-#if GEM_PORTS_MAX < 255
-#error "Implement run-time checks for GEM port index"
-#endif
+	if (index >= GEM_PORTS_MAX)
+		return -EINVAL;
+
 	mutex_lock(&state->lock);
 
 	if (!state->gem_ports_used[index]) {
@@ -509,7 +512,12 @@ int pon_mbox_cnt_alloc_id_table_add(u8 index,
 
 	PROCESS_COUNTER(allocations, 40, table, last, cnt);
 	PROCESS_COUNTER(idle, 40, table, last, cnt);
-	PROCESS_COUNTER64(us_bw, table, last, cnt);
+
+	/* us_bw is a snapshot value representing the current upstream
+	 * bandwidth, not a counter that accumulates over time, so we assign it
+	 * directly instead of processing it for overflow or accumulation.
+	 */
+	table->us_bw = cnt->us_bw;
 
 	state->last_update.alloc_counters[index] = jiffies;
 	mutex_unlock(&state->lock);
@@ -576,10 +584,10 @@ struct pon_eth_counters
 *pon_mbox_cnt_rx_eth_table_get(u8 index,
 			       struct counters_state *state)
 {
-#if GEM_PORTS_MAX < 255
-#error "Implement run-time checks for GEM port index"
-#endif
 	struct pon_eth_counters *ptr;
+
+	if (index >= GEM_PORTS_MAX)
+		return NULL;
 
 	mutex_lock(&state->lock);
 
@@ -604,9 +612,9 @@ int pon_mbox_cnt_rx_eth_table_add(u8 index,
 	if (!cnt)
 		return -EINVAL;
 
-#if GEM_PORTS_MAX < 255
-#error "Implement run-time checks for GEM port index"
-#endif
+	if (index >= GEM_PORTS_MAX)
+		return -EINVAL;
+
 	mutex_lock(&state->lock);
 
 	if (!state->gem_ports_used[index]) {
@@ -640,10 +648,10 @@ struct pon_eth_counters
 *pon_mbox_cnt_tx_eth_table_get(u8 index,
 			       struct counters_state *state)
 {
-#if GEM_PORTS_MAX < 255
-#error "Implement run-time checks for GEM port index"
-#endif
 	struct pon_eth_counters *ptr;
+
+	if (index >= GEM_PORTS_MAX)
+		return NULL;
 
 	mutex_lock(&state->lock);
 
@@ -668,9 +676,9 @@ int pon_mbox_cnt_tx_eth_table_add(u8 index,
 	if (!cnt)
 		return -EINVAL;
 
-#if GEM_PORTS_MAX < 255
-#error "Implement run-time checks for GEM port index"
-#endif
+	if (index >= GEM_PORTS_MAX)
+		return -EINVAL;
+
 	mutex_lock(&state->lock);
 
 	if (!state->gem_ports_used[index]) {
@@ -1183,7 +1191,7 @@ void pon_mbox_last_update_get(struct counters_last_update *last_update,
 
 #define MIN_TIME(a, b) (time_before((a), (b)) ? (a) : (b))
 
-/*
+/**
  * Returns oldest update time of GPON related counters.
  * We need this to know how soon should we schedule the next counters update
  */

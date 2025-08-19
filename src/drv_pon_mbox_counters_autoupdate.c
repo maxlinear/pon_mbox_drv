@@ -177,6 +177,7 @@ pon_mbox_cnt_autoupdate_create(struct pon_mbox *pon_mbox_dev,
 	timer_setup(&cnt_autoupdate->timer, refresh_counters, 0);
 #endif
 	atomic_set(&cnt_autoupdate->running, 1);
+	/* Schedule the first update immediately by using current jiffies */
 	schedule_counters_update(cnt_autoupdate, jiffies);
 	return cnt_autoupdate;
 }
@@ -288,7 +289,7 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 	} tmp;
 	unsigned int i;
 	struct counter_info *info = &cnt_autoupdate->info;
-	unsigned long threshold;
+	unsigned long update_interval_jiffies;
 	unsigned long delta;
 	unsigned long current_time = jiffies;
 	unsigned int num_gem_updates = 0;
@@ -301,7 +302,8 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 	unsigned int num_twdm_tc_updates = 0;
 	int ret = 0;
 
-	threshold = msecs_to_jiffies(update_time_get(cnt_autoupdate) * 1000);
+	update_interval_jiffies =
+		msecs_to_jiffies(update_time_get(cnt_autoupdate) * 1000);
 
 	/* Don't try to refresh counters if mailbox is in_reset */
 	if (cnt_autoupdate->dev->in_reset)
@@ -309,7 +311,7 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 
 	/* TWDM wavelength switch: force counter update (old wl channel) */
 	if (cnt_autoupdate->twdm_wl_info.trigger_update)
-		threshold = 0;
+		update_interval_jiffies = 0;
 
 	counter_info_get(info, cnt_autoupdate->dev->cnt_state);
 
@@ -319,7 +321,7 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 
 		delta = current_time -
 		  info->last_update.gem_port_counters[info->used_gem_ports[i]];
-		if (delta < threshold)
+		if (delta < update_interval_jiffies)
 			continue;
 
 		ret = pon_mbox_gem_port_counters_update(
@@ -352,7 +354,7 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 
 		delta = current_time -
 		      info->last_update.alloc_counters[info->used_alloc_ids[i]];
-		if (delta < threshold)
+		if (delta < update_interval_jiffies)
 			continue;
 
 		ret = pon_mbox_alloc_counters_update(info->used_alloc_ids[i],
@@ -368,7 +370,7 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 	if (!atomic_read(&cnt_autoupdate->running))
 		return;
 	delta = current_time - info->last_update.alloc_discard_counters;
-	if (delta >= threshold) {
+	if (delta >= update_interval_jiffies) {
 		ret = pon_mbox_alloc_lost_counters_update(&tmp.alloc_discard,
 							  cnt_autoupdate->dev);
 		if (ret)
@@ -381,7 +383,7 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 	if (!atomic_read(&cnt_autoupdate->running))
 		return;
 	delta = current_time - info->last_update.gtc_counters;
-	if (delta >= threshold) {
+	if (delta >= update_interval_jiffies) {
 		ret = pon_mbox_gtc_counters_update(PON_MBOX_D_DSWLCH_ID_CURR,
 						   &tmp.gtc,
 						   cnt_autoupdate->dev);
@@ -395,7 +397,7 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 	if (!atomic_read(&cnt_autoupdate->running))
 		return;
 	delta = current_time - info->last_update.xgtc_counters;
-	if (delta >= threshold) {
+	if (delta >= update_interval_jiffies) {
 		ret = pon_mbox_xgtc_counters_update(PON_MBOX_D_DSWLCH_ID_CURR,
 						    &tmp.xgtc,
 						    cnt_autoupdate->dev);
@@ -409,7 +411,7 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 	if (!atomic_read(&cnt_autoupdate->running))
 		return;
 	delta = current_time - info->last_update.twdm_lods_counters;
-	if (delta >= threshold) {
+	if (delta >= update_interval_jiffies) {
 		ret = pon_mbox_twdm_lods_counters_update(
 					PON_MBOX_D_DSWLCH_ID_CURR,
 					&tmp.twdm_lods,
@@ -424,7 +426,7 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 	if (!atomic_read(&cnt_autoupdate->running))
 		return;
 	delta = current_time - info->last_update.twdm_optic_pl_counters;
-	if (delta >= threshold) {
+	if (delta >= update_interval_jiffies) {
 		ret = pon_mbox_twdm_optic_pl_counters_update(
 					PON_MBOX_D_DSWLCH_ID_CURR,
 					&tmp.twdm_optic_pl,
@@ -440,7 +442,7 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 	if (!atomic_read(&cnt_autoupdate->running))
 		return;
 	delta = current_time - info->last_update.twdm_tc_counters;
-	if (delta >= threshold) {
+	if (delta >= update_interval_jiffies) {
 		ret = pon_mbox_twdm_tc_counters_update(
 					PON_MBOX_D_DSWLCH_ID_CURR,
 					&tmp.twdm_tc,
@@ -480,7 +482,9 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 		num_twdm_optic_pl_updates,
 		num_twdm_tc_updates);
 
-	ploam_cnt_autoupdate_update(cnt_autoupdate, threshold);
+	if (atomic_read(&cnt_autoupdate->running))
+		ploam_cnt_autoupdate_update(cnt_autoupdate,
+					    update_interval_jiffies);
 }
 
 void pon_mbox_cnt_autoupdate_wl_switch(struct cnt_autoupdate *cnt_autoupdate,
@@ -499,6 +503,9 @@ void pon_mbox_cnt_autoupdate_wl_switch(struct cnt_autoupdate *cnt_autoupdate,
 	schedule_counters_update(cnt_autoupdate, since);
 }
 
+/**
+ * Destroys the automatic counter update context and releases its resources.
+ */
 void pon_mbox_cnt_autoupdate_destroy(struct cnt_autoupdate *cnt_autoupdate)
 {
 	if (!cnt_autoupdate)
@@ -513,8 +520,8 @@ void pon_mbox_cnt_autoupdate_destroy(struct cnt_autoupdate *cnt_autoupdate)
 	 * pon_mbox_*_counter_update() functions
 	 */
 	atomic_set(&cnt_autoupdate->running, 0);
+	del_timer_sync(&cnt_autoupdate->timer);
 	flush_work(&cnt_autoupdate->work);
-	del_timer(&cnt_autoupdate->timer);
 	kfree(cnt_autoupdate);
 }
 
