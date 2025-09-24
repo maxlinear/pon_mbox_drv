@@ -103,7 +103,7 @@ static unsigned int get_soc_rev(void)
 #define get_soc_rev ltq_get_soc_rev
 
 #else
-/* Dummy implmentation for other platforms (if there are any left) */
+/* Dummy implementation for other platforms (if there are any left) */
 static inline unsigned int get_soc_rev(void)
 {
 	return 0;
@@ -4798,7 +4798,7 @@ static void pon_mbox_init_config(struct work_struct *work)
 		goto init_complete;
 
 	hw_ver.version = get_soc_rev();
-	/* inidcate a predefined/alternate HW version to the firmware */
+	/* indicate a predefined/alternate HW version to the firmware */
 	if (pon->soc_spec->hw_version_firmware)
 		hw_ver.version = pon->soc_spec->hw_version_firmware;
 
@@ -6037,7 +6037,7 @@ static int __init pon_mbox_driver_init(void)
 #endif
 	if (ret) {
 		pr_err("can't register generic netlink");
-		return ret;
+		goto out_destroy_class;
 	}
 
 	ret = spi_register_driver(&pon_mbox_spi_driver);
@@ -6065,9 +6065,8 @@ out_unreg_spi:
 	spi_unregister_driver(&pon_mbox_spi_driver);
 out_unreg_genl:
 	genl_unregister_family(&pon_mbox_genl_family);
-
-	if (pon_mbox_class && !IS_ERR(pon_mbox_class))
-		class_destroy(pon_mbox_class);
+out_destroy_class:
+	class_destroy(pon_mbox_class);
 
 	return ret;
 }
@@ -6080,6 +6079,8 @@ static void __exit pon_mbox_driver_exit(void)
 	spi_unregister_driver(&pon_mbox_spi_driver);
 
 	genl_unregister_family(&pon_mbox_genl_family);
+
+	class_destroy(pon_mbox_class);
 }
 module_exit(pon_mbox_driver_exit);
 

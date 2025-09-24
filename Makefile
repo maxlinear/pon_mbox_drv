@@ -1,4 +1,4 @@
-export PACKAGE_VERSION=1.27.2
+export PACKAGE_VERSION=1.27.3
 PACKAGE=pon_mbox_drv
 
 ifneq ($(KERNELRELEASE),)

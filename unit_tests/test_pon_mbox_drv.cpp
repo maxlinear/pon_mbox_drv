@@ -73,7 +73,7 @@ TEST(Counters, gem_port_get)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 	pon_mbox_cnt_gem_port_del(0, stat);
 	pon_mbox_cnt_gem_port_del(1, stat);
@@ -180,7 +180,7 @@ TEST(Counters, eth_tx_table_get)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 	pon_mbox_cnt_gem_port_del(0, stat);
 	pon_mbox_cnt_gem_port_del(1, stat);
@@ -225,7 +225,7 @@ TEST(Counters, eth_rx_table_get)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 	pon_mbox_cnt_gem_port_del(0, stat);
 	pon_mbox_cnt_gem_port_del(1, stat);
@@ -472,7 +472,7 @@ TEST(Counters, gem_port_counters_add)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 	pon_mbox_cnt_gem_port_del(0, stat);
 
@@ -601,7 +601,7 @@ TEST(Counters, gtc_counters_add)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 
 	struct pon_mbox_gtc_counters *cnt =
@@ -815,7 +815,7 @@ TEST(Counters, xgtc_counters_add)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 
 	struct pon_mbox_xgtc_counters *cnt =
@@ -926,7 +926,7 @@ TEST(Counters, alloc_id_counters_add)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 	pon_mbox_cnt_alloc_id_del(0, stat);
 	pon_mbox_cnt_alloc_id_add(0, stat);
@@ -1002,7 +1002,7 @@ TEST(Counters, alloc_lost_counters_add)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 
 	struct pon_alloc_discard_counters *cnt =
@@ -1287,7 +1287,7 @@ TEST(Counters, rx_eth_counters_add)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 	pon_mbox_cnt_gem_port_del(0, stat);
 
@@ -1479,7 +1479,7 @@ TEST(Counters, tx_eth_counters_add)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 	pon_mbox_cnt_gem_port_del(0, stat);
 
@@ -1634,7 +1634,7 @@ TEST(Counters, xgtc_ploam_ds_counters_add)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 
 	struct pon_mbox_xgtc_ploam_ds_counters *cnt =
@@ -1691,7 +1691,7 @@ TEST(Counters, gtc_ploam_ds_counters_add)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 
 	struct pon_mbox_gtc_ploam_ds_counters *cnt = pon_mbox_cnt_gtc_ploam_ds_table_get(stat);
@@ -1747,7 +1747,7 @@ TEST(Counters, xgtc_ploam_us_counters_add)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 
 	struct pon_mbox_xgtc_ploam_us_counters *cnt =
@@ -1804,7 +1804,7 @@ TEST(Counters, gtc_ploam_us_counters_add)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 
 	struct pon_mbox_gtc_ploam_us_counters *cnt = pon_mbox_cnt_gtc_ploam_us_table_get(stat);
@@ -1860,7 +1860,7 @@ TEST(Counters, twdm_tc_counters_add)
 {
 	mocks::reset();
 	struct counters_state *stat = pon_mbox_cnt_state_init();
-	/* delete, we need to make sure we wont have anything there */
+	/* delete, we need to make sure we won't have anything there */
 	pon_mbox_cnt_lock(stat);
 
 	struct pon_mbox_twdm_tc_counters *cnt =

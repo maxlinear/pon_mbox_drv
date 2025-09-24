@@ -1,5 +1,16 @@
 NEXT VERSION
 
+v1.27.3 2025.08.26
+
+- PONRTSYS-15000: Add OMCI GEM CPU ingress queue
+- PONRTSYS-14973: Add codespell config and fix spelling in code
+- PONRTSYS-14972: Unloading PON mbox driver failing
+  + Fix PON mbox driver unloading issues by adding missing kset_unregister and class_destroy calls.
+- PONRTSYS-14950: Memory corruption after unloading pon eth driver
+  + Introduced `get_altname_property` function to read alternative names from device tree properties.
+  + Updated `ltq_pon_net_probe` to utilize `get_altname_property` for setting the alternative name.
+  + Improved error handling and memory management for alternative name retrieval.
+
 v1.27.2 2025.07.03
 
 - PONRTSYS-14792: pon driver cleanup regarding kernel APIs

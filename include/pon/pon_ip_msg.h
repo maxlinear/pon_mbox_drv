@@ -4874,18 +4874,18 @@ struct ponfw_gem_port_idx {
  * not yet assigned this Alloc ID through PLOAM.
  */
 #define PONFW_ALLOC_IDX_STATUS_REQUESTED 1
-/* The Alloc ID has been assigned by the OLT trough PLOAM but the software
+/* The Alloc ID has been assigned by the OLT through PLOAM but the software
  * has not yet requested this for OMCI-controlled GEM port mapping. It can be
  * deleted through PLOAM without further notice to the software.
  */
 #define PONFW_ALLOC_IDX_STATUS_ASSIGNED 2
-/* The Alloc ID has been assigned by the OLT trough PLOAM and the software
+/* The Alloc ID has been assigned by the OLT through PLOAM and the software
  * has requested this for OMCI-controlled GEM port mapping. It cannot be
  * deleted through PLOAM without waiting for software confirmation through
  * ALLOC_ID_UNLINK.
  */
 #define PONFW_ALLOC_IDX_STATUS_LINKED 3
-/* The Alloc ID has been de-assigned by the OLT trough PLOAM but the software
+/* The Alloc ID has been de-assigned by the OLT through PLOAM but the software
  * has requested this for OMCI-controlled GEM port mapping. It cannot be
  * deleted through PLOAM without waiting for software confirmation through
  * ALLOC_ID_UNLINK.
@@ -6537,18 +6537,18 @@ struct ponfw_debug_gem_port_idx {
  * not yet assigned this Alloc ID through PLOAM.
  */
 #define PONFW_DEBUG_ALLOC_IDX_STATUS_REQUESTED 1
-/* The Alloc ID has been assigned by the OLT trough PLOAM but the software
+/* The Alloc ID has been assigned by the OLT through PLOAM but the software
  * has not yet requested this for OMCI-controlled GEM port mapping. It can be
  * deleted through PLOAM without further notice to the software.
  */
 #define PONFW_DEBUG_ALLOC_IDX_STATUS_ASSIGNED 2
-/* The Alloc ID has been assigned by the OLT trough PLOAM and the software
+/* The Alloc ID has been assigned by the OLT through PLOAM and the software
  * has requested this for OMCI-controlled GEM port mapping. It cannot be
  * deleted through PLOAM without waiting for software confirmation through
  * ALLOC_ID_UNLINK.
  */
 #define PONFW_DEBUG_ALLOC_IDX_STATUS_LINKED 3
-/* The Alloc ID has been de-assigned by the OLT trough PLOAM but the software
+/* The Alloc ID has been de-assigned by the OLT through PLOAM but the software
  * has requested this for OMCI-controlled GEM port mapping. It cannot be
  * deleted through PLOAM without waiting for software confirmation through
  * ALLOC_ID_UNLINK.

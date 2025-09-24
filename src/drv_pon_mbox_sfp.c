@@ -265,12 +265,7 @@ static int moddef0_register(struct pon_mbox *pon, struct device_node *np)
 
 static void sfp_release(struct kobject *kobj)
 {
-	struct pon_sfp_priv *sfp_priv;
-
 	pr_debug("sfp-release %p\n", kobj);
-
-	sfp_priv = to_sfp_obj(kobj);
-	kfree(sfp_priv);
 }
 
 static struct kobj_type sfp_ktype = {
@@ -368,6 +363,7 @@ int pon_sfp_probe(struct pon_mbox *pon, struct device_node *np)
 
 err:
 	kobject_put(&sfp_priv->kobj);
+	kset_unregister(sfp_priv->kset);
 
 	for (i = 0; i < MAX_SFP_EEPROM; i++) {
 		client = sfp_priv->eep[i].client;
@@ -393,6 +389,7 @@ void pon_sfp_remove(struct pon_mbox *pon)
 		return;
 
 	kobject_put(&sfp_priv->kobj);
+	kset_unregister(sfp_priv->kset);
 
 	if (sfp_priv->gpio_irq_mod_def_0)
 		devm_free_irq(pon->dev, sfp_priv->gpio_irq_mod_def_0, pon);

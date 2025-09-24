@@ -58,6 +58,9 @@
 #if IS_ENABLED(CONFIG_QOS_TC)
 #include <net/qos_tc.h>
 #endif
+#if IS_ENABLED(CONFIG_MXL_DPM_OMCI_PRIORITIZATION)
+#include <net/dp_cpu_ing_qos.h>
+#endif
 
 #include <pon/pon_ip_msg.h>
 #include <pon/pon_mbox_ikm.h>
@@ -1534,6 +1537,30 @@ int ltq_pon_net_register_dp_port(struct ltq_pon_net_hw *hw, enum pon_mode mode)
 	return 0;
 }
 
+static const char *get_altname_property(struct device *dev)
+{
+	const char *altname = NULL;
+	const char *altname_dup;
+	int ret;
+
+	/* Try to read the alternative name from device tree */
+	ret = of_property_read_string(dev->of_node, "mxl,altname", &altname);
+	if (ret)
+		ret = of_property_read_string(dev->of_node, "intel,altname",
+					      &altname);
+	if (ret || !altname) {
+		dev_dbg(dev, "can not get <altname> property: %i\n", ret);
+		return NULL;
+	}
+
+	/* We have to use the duplicate string, because it will be freed during
+	 * netdev unregister.
+	 */
+	altname_dup = kstrdup(altname, GFP_KERNEL);
+	/* if kstrdup fails, we return NULL by intention here */
+	return altname_dup;
+}
+
 /** Probes the PON IP hardware and registers the PON IP hardware interface. */
 static int ltq_pon_net_probe(struct platform_device *pdev)
 {
@@ -1543,7 +1570,7 @@ static int ltq_pon_net_probe(struct platform_device *pdev)
 	struct net_device *hw_ndev;
 	const struct ltq_pon_net_soc_data *soc_data = NULL;
 	enum pon_mode mode;
-	const char *altname = NULL;
+	const char *altname;
 	int ret;
 
 	soc_data = of_device_get_match_data(dev);
@@ -1615,9 +1642,6 @@ static int ltq_pon_net_probe(struct platform_device *pdev)
 		hw->max_gpid = 0;
 	}
 
-	/* Optional, if it fails the pointer is still NULL */
-	(void)of_property_read_string(of_node, "intel,altname", &altname);
-
 	hw->dp_mode_registered = 0;
 
 	hw_ndev->netdev_ops = &ltq_pon_net_mdev_ops;
@@ -1636,19 +1660,23 @@ static int ltq_pon_net_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	/* Optional, if it fails the pointer is NULL */
+	altname = get_altname_property(dev);
 	if (altname) {
 		ret = netdev_name_node_alt_create(hw_ndev, altname);
-		if (ret)
+		if (ret) {
 			dev_err(dev, "Cannot set altname '%s', error %d\n",
 				altname, ret);
+			kfree(altname);
+		}
 	}
 
 	platform_set_drvdata(pdev, hw);
 
 	/*
-	 * Get the current PON mode, at bootup this is probably
-	 * PON_MODE_UNKNOWN, but when this driver gets loaded later or it
-	 * gets reloaded after some time the pon mode could already be set.
+	 * Retrieve the current PON mode. At boot, this is likely
+	 * PON_MODE_UNKNOWN. However, if the driver is loaded later
+	 * or reloaded, the PON mode might already be set.
 	 */
 	mode = pon_mbox_get_pon_mode();
 	ret = ltq_pon_net_register_dp_port(hw, mode);
@@ -1716,7 +1744,7 @@ enum {
 	IFLA_PON_GEM_DIR,
 	IFLA_PON_GEM_ENC,
 	IFLA_PON_GEM_MC,
-	/* For debbuging purposes only */
+	/* For debugging purposes only */
 	IFLA_PON_GEM_BP,
 	IFLA_PON_GEM_CTP,
 	IFLA_PON_GEM_MAX
@@ -1836,6 +1864,42 @@ static void ltq_pon_net_dp_domain_upd(struct ltq_pon_net_gem *gem,
 	}
 }
 
+#if IS_ENABLED(CONFIG_MXL_DPM_OMCI_PRIORITIZATION)
+static int omci_rx_queue_add(struct ltq_pon_net_gem *gem)
+{
+	struct net_device *ndev = gem->ndev;
+	int ret;
+
+	netdev_dbg(ndev, "Adding hostif queue for %s\n", ndev->name);
+	ret = dp_omci_update_hostif(ndev, OMCI_HOSTIF_ADD);
+	WARN_ON(ret);
+
+	return ret;
+}
+
+static int omci_rx_queue_del(struct ltq_pon_net_gem *gem)
+{
+	struct net_device *ndev = gem->ndev;
+	int ret;
+
+	netdev_dbg(ndev, "Deleting hostif queue for %s\n", ndev->name);
+	ret = dp_omci_update_hostif(ndev, OMCI_HOSTIF_DEL);
+	WARN_ON(ret);
+
+	return ret;
+}
+#else
+static int omci_rx_queue_add(struct ltq_pon_net_gem *gem)
+{
+	return 0;
+}
+
+static int omci_rx_queue_del(struct ltq_pon_net_gem *gem)
+{
+	return 0;
+}
+#endif
+
 /** Connect the GEM port interface with the given network device to the data
  * path library. This is just a wrapper around the dp_register_subif_ext()
  * function.
@@ -1919,6 +1983,9 @@ static int ltq_pon_net_gem_connect(struct ltq_pon_net_gem *gem,
 	gem->dp_ndev = ndev;
 	gem->dp_connected = true;
 
+	if (gem->gem_traffic_type == PONFW_GEM_PORT_ID_TT_OMCI)
+		omci_rx_queue_add(gem);
+
 	return 0;
 }
 
@@ -1976,6 +2043,9 @@ static int ltq_pon_net_gem_disconnect(struct ltq_pon_net_gem *gem,
 
 	gem->dp_ndev = NULL;
 	gem->dp_connected = false;
+
+	if (gem->gem_traffic_type == PONFW_GEM_PORT_ID_TT_OMCI)
+		omci_rx_queue_del(gem);
 
 	return 0;
 }
@@ -3514,7 +3584,7 @@ enum {
 	IFLA_PON_PMAPPER_PCP_7,
 	IFLA_PON_PMAPPER_MODE,
 	IFLA_PON_PMAPPER_DSCP,
-	/* For debbuging purposes only */
+	/* For debugging purposes only */
 	IFLA_PON_PMAPPER_BP,
 	IFLA_PON_GEM_CTP_0,
 	IFLA_PON_GEM_CTP_1,
