@@ -3,10 +3,9 @@ ifneq ($(KERNELRELEASE),)
 ccflags-y += \
 	-I$(src)/../include
 
-obj-$(CONFIG_PON_ETH_DRV)  += mod_pon_eth.o
-mod_pon_eth-objs += \
-	pon_eth.o \
-	pon_eth_iphost.o
+obj-$(CONFIG_PON_HGU_VUNI_DRV)  += mod_pon_hgu_vuni.o
+mod_pon_hgu_vuni-objs += \
+	pon_hgu_vuni.o
 
 else
 check-style:

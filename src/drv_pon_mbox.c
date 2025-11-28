@@ -31,6 +31,7 @@
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/firmware.h>
+#include <linux/hashtable.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
@@ -133,16 +134,9 @@ static inline unsigned int get_soc_rev(void)
  *  @{
  */
 
-#ifdef EXTRA_VERSION
-#define pon_mbox_drv_extra_ver_str "." EXTRA_VERSION
-#else
-#define pon_mbox_drv_extra_ver_str ""
-#endif
-
 /** what string support, version string */
 const char pon_mbox_drv_whatversion[] = "@(#)MaxLinear PON Mailbox driver, version "
-					 __stringify(PACKAGE_VERSION)
-					 pon_mbox_drv_extra_ver_str;
+					 __stringify(PACKAGE_VERSION);
 
 #define CHIPTOP_IFMUX_CFG				0x120
 #define SECTOP_PON_PPM					0x148
@@ -287,37 +281,6 @@ static u32 pon_mbox_seq;
  */
 static u32 fake_event_msg_snd_portid;
 static u32 fake_event_msg_snd_seq;
-
-/*
- * A callback function of PTP driver to forward 1PPS time stamps.
- */
-static void (*pon_mbox_pps_callback_func)(char *msg,
-	   size_t msg_len) = (void *)NULL;
-
-/*
- * A callback function of PTP driver to enable events.
- */
-static void (*pon_mbox_pps_psc_callback_func)(char *msg,
-	   size_t msg_len) = (void *)NULL;
-
-/*
- * A callback function of ETH driver to take an action on PLOAM state change
- */
-static void (*pon_mbox_ploam_state_callback_func)(char *msg,
-	   size_t msg_len);
-
-/*
- * A callback function of ETH driver to take an action on allocation link.
- */
-static void (*pon_mbox_alloc_id_link_callback_func)(char *msg,
-	   size_t msg_len);
-
-/*
- * A callback function of ETH driver to take an action on allocation unlink.
- */
-static void (*alloc_id_unlink_callback_func)(char *msg,
-					     size_t msg_len,
-					     u32 seq);
 
 static int (*pon_mbox_mode_change_callback_func)(enum pon_mode);
 
@@ -3528,8 +3491,10 @@ static inline void pon_mbox_get_random_bytes(void *buf, size_t nbytes)
 #endif
 }
 
-static void pon_mbox_handle_random_number(struct pon_mbox *pon, u32 seq)
+static void handle_ponip_event_rand_num(void *module, const void *msg,
+					size_t msg_len, u8 seq)
 {
+	struct pon_mbox *pon = module;
 	struct ponfw_rand_num rand = {0};
 	ssize_t ret_fw = 0;
 
@@ -3545,7 +3510,6 @@ static void pon_mbox_handle_random_number(struct pon_mbox *pon, u32 seq)
 		dev_err(pon->dev, "Sending random numbers to FW failed: %zi\n",
 			ret_fw);
 	}
-
 }
 
 static int pon_mbox_fatal_err_handle(struct pon_mbox *pon,
@@ -3600,10 +3564,11 @@ static int pon_mbox_fatal_err_handle(struct pon_mbox *pon,
 	return ret;
 }
 
-static void pon_mbox_handle_alarm_report(struct pon_mbox *pon, char *msg,
-					 size_t msg_len)
+static void pon_mbox_handle_alarm_report(void *module, const void *msg,
+					 size_t msg_len, u8 seq)
 {
-	struct ponfw_report_alarm *alarm = (struct ponfw_report_alarm *)msg;
+	struct pon_mbox *pon = module;
+	const struct ponfw_report_alarm *alarm = msg;
 	struct device *dev = pon->dev;
 	int ret;
 
@@ -3645,10 +3610,11 @@ static void pon_mbox_handle_alarm_report(struct pon_mbox *pon, char *msg,
 	}
 }
 
-static void pon_mbox_handle_alarm_clear(struct pon_mbox *pon, char *msg,
-					size_t msg_len)
+static void pon_mbox_handle_alarm_clear(void *module, const void *msg,
+					size_t msg_len, u8 seq)
 {
-	struct ponfw_clear_alarm *alarm = (struct ponfw_clear_alarm *)msg;
+	struct pon_mbox *pon = module;
+	const struct ponfw_clear_alarm *alarm = msg;
 	struct device *dev = pon->dev;
 
 	if (msg_len != sizeof(*alarm)) {
@@ -3658,10 +3624,11 @@ static void pon_mbox_handle_alarm_clear(struct pon_mbox *pon, char *msg,
 	}
 }
 
-static void pon_mbox_handle_ploam_state(struct pon_mbox *pon, char *msg,
-					size_t msg_len)
+static void pon_mbox_handle_ploam_state(void *module, const void *msg,
+					size_t msg_len, u8 seq)
 {
-	struct ponfw_ploam_state *ploam = (struct ponfw_ploam_state *)msg;
+	struct pon_mbox *pon = module;
+	const struct ponfw_ploam_state *ploam = msg;
 	struct device *dev = pon->dev;
 
 	if (msg_len != sizeof(*ploam)) {
@@ -3695,11 +3662,111 @@ static void pon_mbox_handle_ploam_state(struct pon_mbox *pon, char *msg,
 	/* Loop timing is done in FW only. */
 }
 
+struct pon_event_handler_entry {
+	u32 cmd_id;
+	void (*handle_event)(void *module, const void *msg, size_t msg_len,
+			     u8 seq);
+	/* Pointer to the module that handles the event */
+	void *module;
+	/* Node for the hash list */
+	struct hlist_node node;
+};
+
+/* Number of bits for the hash table */
+#define PON_MBOX_HT_BITS 4
+/* Hash table for event handlers */
+static DEFINE_HASHTABLE(pon_event_handler_hash_table, PON_MBOX_HT_BITS);
+/* Lock for synchronizing access to the hash table */
+static DECLARE_RWSEM(pon_event_handler_lock);
+
+void pon_mbox_register_event_handler(u32 cmd_id,
+				     void (*handle_event)(void *module,
+							  const void *msg,
+							  size_t msg_len,
+							  u8 seq),
+				     void *module)
+{
+	struct pon_event_handler_entry *entry;
+
+	if (!handle_event || !module)
+		return;
+
+	entry = kcalloc(1, sizeof(*entry), GFP_KERNEL);
+	if (!entry)
+		return;
+
+	entry->cmd_id = cmd_id;
+	entry->handle_event = handle_event;
+	entry->module = module;
+
+	pr_debug("Registered event handler for cmd_id: 0x%04x (hash idx %d)\n",
+		 cmd_id, hash_32(cmd_id, PON_MBOX_HT_BITS));
+
+	down_write(&pon_event_handler_lock);
+	hash_add(pon_event_handler_hash_table, &entry->node, cmd_id);
+	up_write(&pon_event_handler_lock);
+}
+EXPORT_SYMBOL(pon_mbox_register_event_handler);
+
+void pon_mbox_unregister_event_handler_module(void *module)
+{
+	struct pon_event_handler_entry *entry;
+	struct hlist_node *tmp;
+	int i;
+
+	if (!module)
+		return;
+
+	down_write(&pon_event_handler_lock);
+	hash_for_each_safe(pon_event_handler_hash_table, i, tmp, entry, node) {
+		if (entry->module == module) {
+			pr_debug("Unregistered event handler for cmd_id: 0x%04x\n",
+				 entry->cmd_id);
+			hash_del(&entry->node);
+			kfree(entry);
+		}
+	}
+	up_write(&pon_event_handler_lock);
+}
+EXPORT_SYMBOL(pon_mbox_unregister_event_handler_module);
+
+static void pon_mbox_unregister_all_event_handlers(void)
+{
+	struct pon_event_handler_entry *entry;
+	struct hlist_node *tmp;
+	int i;
+
+	down_write(&pon_event_handler_lock);
+	hash_for_each_safe(pon_event_handler_hash_table, i, tmp, entry, node) {
+		pr_debug("Unregistered event handler for cmd_id: 0x%04x\n",
+			 entry->cmd_id);
+		hash_del(&entry->node);
+		kfree(entry);
+	}
+	up_write(&pon_event_handler_lock);
+}
+
+/* Check if the command ID is valid by looking it up in the hash table */
+static int cmd_id_is_in_table(u32 cmd_id)
+{
+	struct pon_event_handler_entry *entry;
+
+	down_read(&pon_event_handler_lock);
+	hash_for_each_possible(pon_event_handler_hash_table, entry, node,
+			       cmd_id) {
+		if (entry->cmd_id == cmd_id) {
+			up_read(&pon_event_handler_lock);
+			return 1; /* Command ID is valid */
+		}
+	}
+	up_read(&pon_event_handler_lock);
+	return 0;  /* Command ID is not valid */
+}
+
 /* Structure containing the FW event information for the Linux work queue. */
 struct pon_mbox_event {
 	struct work_struct work;
 	struct pon_mbox *pon;
-	void (*handle_ponip_event)(struct pon_mbox_event *event);
 	struct pon_msg_header header;
 	size_t msg_len;
 #ifdef DEBUG_MBOX_RESPONSE_TIME
@@ -3707,6 +3774,38 @@ struct pon_mbox_event {
 #endif
 	char msg[];
 };
+
+/**
+ * @brief Handles an event received from the PON FW by looking up the command ID
+ * in the hash table and calling the corresponding handler if found.
+ *
+ * This function is called when an event is received from the PON FW. It looks
+ * up the command ID in the hash table and calls all handlers if found.
+ *
+ * @param event Pointer to the structure containing event details.
+ */
+static void pon_mbox_handle_event_by_hashtable(struct pon_mbox_event *event)
+{
+	struct pon_event_handler_entry *entry;
+	struct pon_msg_header *header = &event->header;
+	int cmd_id = header->cmd;
+	void *msg = event->msg;
+	size_t msg_len = event->msg_len;
+
+	down_read(&pon_event_handler_lock);
+	/* Call all handlers registered for this command ID */
+	hash_for_each_possible(pon_event_handler_hash_table, entry, node,
+			       cmd_id) {
+		if (entry->cmd_id == cmd_id) {
+			pr_debug("%s: cmd_id=%u, seq=%u %p %pBb\n", __func__,
+				 cmd_id, header->seq, entry->module,
+				 entry->handle_event);
+			entry->handle_event(entry->module, msg, msg_len,
+					    header->seq);
+		}
+	}
+	up_read(&pon_event_handler_lock);
+}
 
 static void pon_mbox_handle_event(struct work_struct *work)
 {
@@ -3723,8 +3822,7 @@ static void pon_mbox_handle_event(struct work_struct *work)
 	event->debug_jiffies_start = jiffies;
 #endif
 
-	if (event->handle_ponip_event)
-		event->handle_ponip_event(event);
+	pon_mbox_handle_event_by_hashtable(event);
 
 #ifdef DEBUG_MBOX_RESPONSE_TIME
 	timer = jiffies_to_usecs(jiffies - event->debug_jiffies_start);
@@ -3734,62 +3832,6 @@ static void pon_mbox_handle_event(struct work_struct *work)
 			event->header.cmd, timer);
 #endif
 	kfree(event);
-}
-
-static void handle_ponip_event_clear_alarm(struct pon_mbox_event *event)
-{
-	pon_mbox_handle_alarm_clear(event->pon, event->msg, event->msg_len);
-}
-
-static void handle_ponip_event_report_alarm(struct pon_mbox_event *event)
-{
-	pon_mbox_handle_alarm_report(event->pon, event->msg, event->msg_len);
-}
-
-static void handle_ponip_event_tod_sync(struct pon_mbox_event *event)
-{
-	/* TOD_SYNC messages initiated by PONIP carry
-	 * a timestamp captured on 1PPS event and can
-	 * be forwarded to the PTP driver.
-	 */
-	if (pon_mbox_pps_callback_func)
-		pon_mbox_pps_callback_func(event->msg, event->msg_len);
-}
-
-static void handle_ponip_event_ploam_state(struct pon_mbox_event *event)
-{
-	pon_mbox_handle_ploam_state(event->pon, event->msg, event->msg_len);
-	if (pon_mbox_pps_psc_callback_func)
-		pon_mbox_pps_psc_callback_func(event->msg, event->msg_len);
-	if (pon_mbox_ploam_state_callback_func)
-		pon_mbox_ploam_state_callback_func(event->msg, event->msg_len);
-}
-
-static void handle_ponip_event_rand_num(struct pon_mbox_event *event)
-{
-	pon_mbox_handle_random_number(event->pon, event->header.seq);
-}
-
-static void handle_ponip_event_alloc_id_link(struct pon_mbox_event *event)
-{
-	if (pon_mbox_alloc_id_link_callback_func)
-		pon_mbox_alloc_id_link_callback_func(event->msg,
-						     event->msg_len);
-}
-
-static void handle_ponip_event_alloc_id_unlink(struct pon_mbox_event *event)
-{
-	if (alloc_id_unlink_callback_func)
-		alloc_id_unlink_callback_func(event->msg,
-					      event->msg_len,
-					      event->header.seq);
-}
-
-static void handle_event_twdm_us_wl_tuning(struct pon_mbox_event *event)
-{
-	struct pon_mbox *pon = event->pon;
-
-	(void)pon;
 }
 
 /*
@@ -3806,43 +3848,15 @@ static void pon_mbox_queue_event(struct pon_mbox *pon,
 {
 	struct pon_mbox_event *event;
 	bool ret;
-	void (*handle_event)(struct pon_mbox_event *event) = (void *)NULL;
 
-	switch (header->cmd) {
-	case PONFW_CLEAR_ALARM_CMD_ID:
-		handle_event = handle_ponip_event_clear_alarm;
-		break;
-	case PONFW_REPORT_ALARM_CMD_ID:
-		handle_event = handle_ponip_event_report_alarm;
-		break;
-	case PONFW_ONU_TOD_SYNC_CMD_ID:
-		handle_event = handle_ponip_event_tod_sync;
-		break;
-	case PONFW_PLOAM_STATE_CMD_ID:
-		handle_event = handle_ponip_event_ploam_state;
-		break;
-	case PONFW_RAND_NUM_CMD_ID:
-		handle_event = handle_ponip_event_rand_num;
-		break;
-	case PONFW_ALLOC_ID_LINK_CMD_ID:
-		handle_event = handle_ponip_event_alloc_id_link;
-		break;
-	case PONFW_ALLOC_ID_UNLINK_CMD_ID:
-		handle_event = handle_ponip_event_alloc_id_unlink;
-		break;
-	case PONFW_TWDM_US_WL_TUNING_CMD_ID:
-		handle_event = handle_event_twdm_us_wl_tuning;
-		break;
-	}
-
-	if (!handle_event)
+	/* If the command ID is not registered, we return early. */
+	if (!cmd_id_is_in_table(header->cmd))
 		return;
 
 	event = kzalloc(sizeof(*event) + msg_len, GFP_KERNEL);
 	if (!event)
 		return;
 
-	event->handle_ponip_event = handle_event;
 	event->pon = pon;
 	event->header = *header;
 	event->msg_len = msg_len;
@@ -5156,6 +5170,15 @@ static int pon_mbox_register(struct pon_mbox *pon)
 	memset(&pon->lt_cfg, 0, sizeof(pon->lt_cfg));
 	memset(&pon->iop_cfg, 0, sizeof(pon->iop_cfg));
 
+	pon_mbox_register_event_handler(PONFW_CLEAR_ALARM_CMD_ID,
+					pon_mbox_handle_alarm_clear, pon);
+	pon_mbox_register_event_handler(PONFW_REPORT_ALARM_CMD_ID,
+					pon_mbox_handle_alarm_report, pon);
+	pon_mbox_register_event_handler(PONFW_PLOAM_STATE_CMD_ID,
+					pon_mbox_handle_ploam_state, pon);
+	pon_mbox_register_event_handler(PONFW_RAND_NUM_CMD_ID,
+					handle_ponip_event_rand_num, pon);
+
 	return 0;
 }
 
@@ -5378,6 +5401,8 @@ static int _pon_mbox_spi_remove(struct spi_device *spi)
 	pon_mbox_cnt_autoupdate_destroy(pon->cnt_autoupdate);
 	pon_mbox_cnt_state_release(pon->cnt_state);
 
+	pon_mbox_unregister_all_event_handlers();
+
 	pon_mbox_dev = NULL;
 
 	return 0;
@@ -5539,49 +5564,6 @@ void pon_mbox_save_pon_dp_flags(const struct pon_dp_flags *dp_flags)
 		pon_mbox_dev->dp_flags = *dp_flags;
 }
 EXPORT_SYMBOL(pon_mbox_save_pon_dp_flags);
-
-/*
- * This function registers a callback function of the PTP driver
- * to forward TOD_SYNC automatic messages from PONIP containing
- * 1PPS time stamp.
- */
-void pon_mbox_pps_callback_register(void(*func)(char *msg, size_t msg_len))
-{
-	pon_mbox_pps_callback_func = func;
-}
-EXPORT_SYMBOL(pon_mbox_pps_callback_register);
-
-/*
- * This function registers a callback function of the PTP driver
- * to enable events.
- */
-void pon_mbox_pps_psc_callback_register(void(*func)(char *msg, size_t msg_len))
-{
-	pon_mbox_pps_psc_callback_func = func;
-}
-EXPORT_SYMBOL(pon_mbox_pps_psc_callback_register);
-
-void pon_mbox_ploam_state_callback_func_register(void(*func)
-					      (char *msg, size_t msg_len))
-{
-	pon_mbox_ploam_state_callback_func = func;
-}
-EXPORT_SYMBOL(pon_mbox_ploam_state_callback_func_register);
-
-void pon_mbox_alloc_id_link_callback_register(void(*func)
-					      (char *msg, size_t msg_len))
-{
-	pon_mbox_alloc_id_link_callback_func = func;
-}
-EXPORT_SYMBOL(pon_mbox_alloc_id_link_callback_register);
-
-void pon_mbox_alloc_id_unlink_callback_register(void(*func)
-						(char *msg, size_t msg_len,
-						 u32 seq))
-{
-	alloc_id_unlink_callback_func = func;
-}
-EXPORT_SYMBOL(pon_mbox_alloc_id_unlink_callback_register);
 
 /*
  * This function registers a callback function of the PON Ethernet driver to
@@ -5934,6 +5916,8 @@ static int pon_mbox_pdev_remove(struct platform_device *pdev)
 		dev_err(&pdev->dev, "no device data to remove\n");
 		return -ENODEV;
 	}
+
+	pon_mbox_unregister_all_event_handlers();
 
 	device_destroy(pon_mbox_class, MKDEV(0, 0));
 

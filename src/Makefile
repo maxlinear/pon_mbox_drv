@@ -2,8 +2,7 @@ ifneq ($(KERNELRELEASE),)
 
 ccflags-y += \
 	-I$(src)/ \
-	-I$(src)/../include \
-	-DPACKAGE_VERSION=$(PACKAGE_VERSION)
+	-I$(src)/../include
 
 obj-$(CONFIG_PON_MBOX_DRV)  += mod_pon_mbox.o
 mod_pon_mbox-objs += \

@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright (c) 2022 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2022 - 2025 MaxLinear, Inc.
  * Copyright (c) 2018 - 2020 Intel Corporation
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
@@ -107,54 +107,53 @@ ssize_t pon_mbox_send(unsigned int cmd_id, unsigned int rw,
 ssize_t pon_mbox_send_ack(unsigned int cmd_id, unsigned int rw, u32 seq);
 
 /**
- * @brief Register a callback function of PTP driver to forward 1PPS timestamps.
- *
- * @param func A pointer to the function consuming 1PPS time stamps.
- */
-void pon_mbox_pps_callback_register(void(*func)(char *msg, size_t msg_len));
-
-/**
- * @brief Register a callback function of PTP driver to enable events.
- *
- * @param func A pointer to the function enabling events.
- */
-void pon_mbox_pps_psc_callback_register(void(*func)(char *msg, size_t msg_len));
-
-/**
- * @brief Register a callback function of ETH driver to take an action on
- *	  ploam state change,
- *
- * @param func A pointer to the ETH driver function.
- */
-void pon_mbox_ploam_state_callback_func_register(void(*func)
-					(char *msg, size_t msg_len));
-
-/**
- * @brief Register a callback function of ETH driver to take an action on
- *	  allocation link.
- *
- * @param func A pointer to the ETH driver function.
- */
-void pon_mbox_alloc_id_link_callback_register(void(*func)
-					(char *msg, size_t msg_len));
-
-
-/**
- * @brief Register a callback function of ETH driver to take an action on
- *	  allocation unlink.
- *
- * @param func A pointer to the ETH driver function.
- */
-void pon_mbox_alloc_id_unlink_callback_register(void(*func)
-					(char *msg, size_t msg_len, u32 seq));
-
-/**
  * @brief Register a callback function of ETH driver to take an action
  *	  when the pon mode is changed.
  *
  * @param func A pointer to the ETH driver function.
  */
 void pon_mbox_mode_callback_register(int(*func)(enum pon_mode));
+
+/**
+ * @brief Registers an event handler for a specific command ID.
+ *
+ * This function allows the registration of a callback function to handle
+ * events associated with a specific command ID. The registered handler will
+ * be invoked whenever an event with the specified command ID is received.
+ *
+ * @param cmd_id The command ID for which the event handler is being
+ *               registered.
+ * @param handle_event Pointer to the function that will handle the event.
+ *                     The function should accept the following parameters:
+ *                     - module: A pointer to the module associated with the
+ *                               event.
+ *                     - msg: A pointer to the message payload (read-only).
+ *                     - msg_len: The length of the message payload.
+ *                     - seq: The sequence number of the event (type u8).
+ *                            Note: This value is limited to 3 bits (values
+ *                            0-7) by the mailbox handling and might be taken
+ *                            "as is" to acknowledge the event to the firmware.
+ * @param module A pointer to the module that will be passed to the event
+ *               handler.
+ */
+void pon_mbox_register_event_handler(u32 cmd_id,
+				     void (*handle_event)(void *module,
+							  const void *msg,
+							  size_t msg_len,
+							  u8 seq),
+				     void *module);
+
+/**
+ * @brief Unregisters an event handler module from the PON mailbox driver.
+ *
+ * This function removes the specified module from the list of registered
+ * event handler modules, effectively disabling its ability to handle
+ * events from the PON mailbox.
+ *
+ * @param module A pointer to the module to be unregistered. This should
+ *               be a valid module that was previously registered.
+ */
+void pon_mbox_unregister_event_handler_module(void *module);
 
 /**
  * @brief Returns the Linux interface index for the GEM port of the given skb.

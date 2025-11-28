@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- *  Copyright (c) 2020 - 2024 MaxLinear, Inc.
+ *  Copyright (c) 2020 - 2025 MaxLinear, Inc.
  *  Copyright (C) 2017 - 2020 Intel Corporation.
  *
  *  This program is free software; you can redistribute it and/or modify it
@@ -67,16 +67,9 @@
 #include "pon_eth.h"
 #include "pon_eth_iphost.h"
 
-#ifdef EXTRA_VERSION
-#define pon_eth_extra_ver_str "." EXTRA_VERSION
-#else
-#define pon_eth_extra_ver_str ""
-#endif
-
 /** what string support, version string */
 const char pon_eth_whatversion[] = "@(#)MaxLinear PON network driver, version "
-				    __stringify(PACKAGE_VERSION)
-				    pon_eth_extra_ver_str;
+				    __stringify(PACKAGE_VERSION);
 
 /** Maximum number of TX queues each T-Cont can have */
 #define PON_TCONT_TX_QUEUES		8
@@ -223,6 +216,13 @@ static int enhanced_pmapper_gem_add(bool force_update,
 static int ltq_pon_net_dp_gem_update(struct ltq_pon_net_gem *gem,
 				     struct net_device *master);
 static void ltq_pon_net_tcont_gems_activate(struct ltq_pon_net_tcont *tcont);
+
+static void ltq_pon_net_ploam_state_event(void *module, const void *msg,
+					  size_t msg_len, u8 seq);
+static void ltq_pon_net_alloc_id_link_event(void *module, const void *msg,
+					    size_t msg_len, u8 seq);
+static void ltq_pon_net_alloc_id_unlink_event(void *module, const void *msg,
+					      size_t msg_len, u8 seq);
 
 static struct ltq_pon_net_pmapper*
 pmapper_next(struct ltq_pon_net_pmapper *p_mapper, u8 gem_idx);
@@ -1673,6 +1673,13 @@ static int ltq_pon_net_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, hw);
 
+	pon_mbox_register_event_handler(PONFW_PLOAM_STATE_CMD_ID,
+					ltq_pon_net_ploam_state_event, hw);
+	pon_mbox_register_event_handler(PONFW_ALLOC_ID_LINK_CMD_ID,
+					ltq_pon_net_alloc_id_link_event, hw);
+	pon_mbox_register_event_handler(PONFW_ALLOC_ID_UNLINK_CMD_ID,
+					ltq_pon_net_alloc_id_unlink_event, hw);
+
 	/*
 	 * Retrieve the current PON mode. At boot, this is likely
 	 * PON_MODE_UNKNOWN. However, if the driver is loaded later
@@ -1713,6 +1720,8 @@ static int ltq_pon_net_remove(struct platform_device *pdev)
 		return -ENODEV;
 
 	kfree(hw->ani_archived_stats);
+
+	pon_mbox_unregister_event_handler_module(hw);
 
 	ltq_pon_iphost_port_deregister(hw);
 
@@ -3256,7 +3265,8 @@ static int ltq_pon_net_qos_idx_link_get(struct net_device *tcont_ndev)
 	return 0;
 }
 
-static void ltq_pon_net_ack_alloc_unlink(struct ponfw_alloc_id_unlink *fw_alloc)
+static void
+ltq_pon_net_ack_alloc_unlink(const struct ponfw_alloc_id_unlink *fw_alloc)
 {
 	struct ponfw_alloc_id_unlink fw_alloc_input = {0};
 	int err;
@@ -3288,8 +3298,9 @@ static void ltq_pon_net_qos_idx_flush(struct ltq_pon_net_tcont *tcont)
 			   tcont->qos_idx);
 }
 
-static void ltq_pon_net_qos_idx_unlink(struct net_device *tcont_ndev,
-				       struct ponfw_alloc_id_unlink *fw_alloc)
+static void
+ltq_pon_net_qos_idx_unlink(struct net_device *tcont_ndev,
+			   const struct ponfw_alloc_id_unlink *fw_alloc)
 {
 	struct ltq_pon_net_tcont *tcont = netdev_priv(tcont_ndev);
 	struct ponfw_alloc_id_unlink fw_alloc_input = {0};
@@ -4367,10 +4378,10 @@ static void ltq_pon_net_alloc_id_reactivate(struct ltq_pon_net_tcont *tcont)
 	ltq_pon_net_tcont_gems_activate(tcont);
 }
 
-static void ltq_pon_net_alloc_id_link_event(char *msg, size_t msg_len)
+static void ltq_pon_net_alloc_id_link_event(void *module, const void *msg,
+					    size_t msg_len, u8 seq)
 {
-	struct ponfw_alloc_id_link *fw_alloc =
-					(struct ponfw_alloc_id_link *)msg;
+	const struct ponfw_alloc_id_link *fw_alloc = msg;
 	struct ltq_pon_net_tcont *tcont;
 
 	if (msg_len != sizeof(*fw_alloc)) {
@@ -4433,11 +4444,10 @@ static void ltq_pon_net_alloc_id_clear_all(void)
 	}
 }
 
-static void ltq_pon_net_alloc_id_unlink_event(char *msg, size_t msg_len,
-					      u32 seq)
+static void ltq_pon_net_alloc_id_unlink_event(void *module, const void *msg,
+					      size_t msg_len, u8 seq)
 {
-	struct ponfw_alloc_id_unlink *fw_alloc =
-					(struct ponfw_alloc_id_unlink *)msg;
+	const struct ponfw_alloc_id_unlink *fw_alloc = msg;
 	struct ltq_pon_net_tcont *tcont;
 	int err;
 
@@ -4523,9 +4533,10 @@ static void ltq_pon_net_o5_gems_activate(void)
 	}
 }
 
-static void ltq_pon_net_ploam_state_event(char *msg, size_t msg_len)
+static void ltq_pon_net_ploam_state_event(void *module, const void *msg,
+					  size_t msg_len, u8 seq)
 {
-	struct ponfw_ploam_state *ploam = (struct ponfw_ploam_state *)msg;
+	const struct ponfw_ploam_state *ploam = msg;
 	struct ltq_pon_net_gem *gem;
 	struct list_head *ele;
 	bool in_o5;
@@ -4670,16 +4681,7 @@ static int __init ltq_pon_net_driver_init(void)
 	if (ret < 0)
 		goto err_iphost_rtnl;
 
-	/* Register mailbox callbacks for PLOAM state, alloc_id link/unlink,
-	 * and mode events
-	 */
-	pon_mbox_ploam_state_callback_func_register(
-					ltq_pon_net_ploam_state_event);
-	pon_mbox_alloc_id_link_callback_register(
-					ltq_pon_net_alloc_id_link_event);
-	pon_mbox_alloc_id_unlink_callback_register(
-					ltq_pon_net_alloc_id_unlink_event);
-
+	/* Register mailbox callbacks for mode events */
 	pon_mbox_mode_callback_register(ltq_pon_net_mode_event);
 
 	/* Register the platform driver last */
@@ -4692,9 +4694,6 @@ static int __init ltq_pon_net_driver_init(void)
 	/* Cleanup in reverse order of registration on error */
 err_notifier:
 	pon_mbox_mode_callback_register(NULL);
-	pon_mbox_alloc_id_unlink_callback_register(NULL);
-	pon_mbox_alloc_id_link_callback_register(NULL);
-	pon_mbox_ploam_state_callback_func_register(NULL);
 	unregister_netdevice_notifier(&ltq_pon_net_notifier_block);
 err_iphost_rtnl:
 	pon_eth_iphost_rtnl_link_unregister();
@@ -4714,9 +4713,6 @@ module_init(ltq_pon_net_driver_init);
 static void __exit ltq_pon_net_driver_exit(void)
 {
 	pon_mbox_mode_callback_register(NULL);
-	pon_mbox_alloc_id_unlink_callback_register(NULL);
-	pon_mbox_alloc_id_link_callback_register(NULL);
-	pon_mbox_ploam_state_callback_func_register(NULL);
 	unregister_netdevice_notifier(&ltq_pon_net_notifier_block);
 	rtnl_link_unregister(&ltq_pon_net_gem_rtnl);
 	rtnl_link_unregister(&ltq_pon_net_tcont_rtnl);

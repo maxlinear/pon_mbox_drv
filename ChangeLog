@@ -1,5 +1,13 @@
 NEXT VERSION
 
+v1.27.4 2025.10.06
+
+- PONRTSYS-15079: [TPZ] Move the "Mxl PON HGU vUNI driver" (mxl_pon_hgu_vuni.c) to PON driver repo
+- PONRTSYS-15026: Flexible handling of message event handlers
+  + Implement a generic event handler registration and unregistration
+- PONRTSYS-15010: Refactor version handling
+  + Change Makefile and driver files to include git hash and dirty state in PACKAGE_VERSION
+
 v1.27.3 2025.08.26
 
 - PONRTSYS-15000: Add OMCI GEM CPU ingress queue

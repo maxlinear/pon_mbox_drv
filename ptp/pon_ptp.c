@@ -3,7 +3,7 @@
  *  under the terms of the GNU General Public License version 2 as published
  *  by the Free Software Foundation.
  *
- *  Copyright (c) 2020 - 2021 MaxLinear, Inc.
+ *  Copyright (c) 2020 - 2025 MaxLinear, Inc.
  *  Copyright (C) 2018 - 2020 Intel Corporation.
  *
  * The driver implements a PTP device (multiple instances available) for
@@ -294,59 +294,65 @@ static const struct ptp_clock_info pon_ptp_clock_info = {
  * This function is registered as a callback at
  * pon_mbox driver to intercept TOD_SYNC messages.
  */
-static void pon_ptp_extts_event(char *msg, size_t msg_len)
+static void pon_ptp_extts_event(void *module, const void *msg, size_t msg_len,
+				u8 seq)
 {
 	struct pon_ptp_priv *ctx;
-	struct ponfw_onu_tod_sync *fw_tods_out;
+	const struct ponfw_onu_tod_sync *fw_tods_out = msg;
 	uint32_t synce_stat;
 
-	if (msg_len == sizeof(struct ponfw_onu_tod_sync)) {
-		fw_tods_out = (struct ponfw_onu_tod_sync *)msg;
+	if (msg_len != sizeof(struct ponfw_onu_tod_sync)) {
+		pr_err("Invalid TOD_SYNC message length: %zu\n", msg_len);
+		return;
+	}
 
-		if (pon_ptp_synce_status_get(&synce_stat) != 0) {
-			pr_err("Cannot get SyncE status. Assume OFF.\n");
-			synce_stat = 0;
-		}
+	if (pon_ptp_synce_status_get(&synce_stat) != 0) {
+		pr_err("Cannot get SyncE status. Assume OFF.\n");
+		synce_stat = 0;
+	}
 
-		list_for_each_entry(ctx, &ptp_list, ptp_inst) {
-			if (!ctx->extts_enable)
-				continue;
+	list_for_each_entry(ctx, &ptp_list, ptp_inst) {
+		dev_dbg(ctx->dev,
+			"PONIP TOD_SYNC event received, extts_enable=%d, synce_stat=%d, sec=%d\n",
+			ctx->extts_enable, synce_stat,
+			fw_tods_out->tod_sec);
+		if (!ctx->extts_enable)
+			continue;
 
-			/* Prepare external timestamp event */
-			ctx->event.type = PTP_CLOCK_EXTTS;
-			/* If tod_quality == 1, the time is traceable
-			 * and EXTTS event contains a valid actual timestamp.
+		/* Prepare external timestamp event */
+		ctx->event.type = PTP_CLOCK_EXTTS;
+		/* If tod_quality == 1, the time is traceable
+			* and EXTTS event contains a valid actual timestamp.
+			*/
+		if (fw_tods_out->tod_quality) {
+			ctx->event.timestamp =
+				(u64)fw_tods_out->tod_sec *
+				(u64)NSEC_PER_SEC;
+		} else {
+			/* If tod_quality == 0, the system has lost
+			 * time source and EXTTS events are filled with
+			 * special fixed values used to control
+			 * phc2sys daemon behavior:
+			 * If SyncE is disabled:
+			 *   INVALID_EXTTS_NOSYNCE
+			 *   phc2sys maintains previous frequency
+			 *   adjustment value,
+			 * If SyncE is enabled:
+			 *   INVALID_EXTTS_SYNCE
+			 *   phc2sys sets frequency adjustment value
+			 *   to 0.
 			 */
-			if (fw_tods_out->tod_quality) {
+			if (synce_stat)
 				ctx->event.timestamp =
-					(u64)fw_tods_out->tod_sec *
-					(u64)NSEC_PER_SEC;
-			} else {
-				/* If tod_quality == 0, the system has lost
-				 * time source and EXTTS events are filled with
-				 * special fixed values used to control
-				 * phc2sys daemon behavior:
-				 * If SyncE is disabled:
-				 *   INVALID_EXTTS_NOSYNCE
-				 *   phc2sys maintains previous
-				 *   frequency adjustment value,
-				 * If SyncE is enabled:
-				 *   INVALID_EXTTS_SYNCE
-				 *   phc2sys sets frequency
-				 *   adjustment value to 0.
-				 */
-				if (synce_stat)
-					ctx->event.timestamp =
-						INVALID_EXTTS_SYNCE;
-				else
-					ctx->event.timestamp =
-						INVALID_EXTTS_NOSYNCE;
-			}
-			ctx->event.index = 0;
-
-			/* Fire event */
-			ptp_clock_event(ctx->ptp_clock, &ctx->event);
+					INVALID_EXTTS_SYNCE;
+			else
+				ctx->event.timestamp =
+					INVALID_EXTTS_NOSYNCE;
 		}
+		ctx->event.index = 0;
+
+		/* Fire event */
+		ptp_clock_event(ctx->ptp_clock, &ctx->event);
 	}
 }
 
@@ -355,9 +361,10 @@ static void pon_ptp_extts_event(char *msg, size_t msg_len)
  * It is used to track the initial start of the firmware to do configurations,
  * which are only possible with a running firmware.
  */
-static void pon_ptp_psc_event(char *msg, size_t msg_len)
+static void pon_ptp_psc_event(void *module, const void *msg, size_t msg_len,
+			      u8 seq)
 {
-	struct ponfw_ploam_state *ploam = (struct ponfw_ploam_state *)msg;
+	const struct ponfw_ploam_state *ploam = msg;
 	int err;
 
 	if (msg_len != sizeof(*ploam))
@@ -460,11 +467,11 @@ static int __init pon_ptp_driver_init(void)
 	ptp_instance = 0;
 	fw_ready = false;
 
-	/* Register a callback function at pon_mbox driver for
-	 * TOD_SYNC automessages from PONIP with 1PPS timestamps.
-	 */
-	pon_mbox_pps_callback_register(pon_ptp_extts_event);
-	pon_mbox_pps_psc_callback_register(pon_ptp_psc_event);
+	/* use pon_ptp_driver address, as we do not have a module instance */
+	pon_mbox_register_event_handler(PONFW_ONU_TOD_SYNC_CMD_ID,
+					pon_ptp_extts_event, &pon_ptp_driver);
+	pon_mbox_register_event_handler(PONFW_PLOAM_STATE_CMD_ID,
+					pon_ptp_psc_event, &pon_ptp_driver);
 
 	ret = platform_driver_register(&pon_ptp_driver);
 	return ret;
@@ -474,11 +481,7 @@ module_init(pon_ptp_driver_init);
 
 static void __exit pon_ptp_driver_exit(void)
 {
-	/* Unregister the callback function at pon_mbox driver for
-	 * TOD_SYNC automessages from PONIP with 1PPS timestamps.
-	 */
-	pon_mbox_pps_callback_register(NULL);
-	pon_mbox_pps_psc_callback_register(NULL);
+	pon_mbox_unregister_event_handler_module(&pon_ptp_driver);
 
 	platform_driver_unregister(&pon_ptp_driver);
 }
