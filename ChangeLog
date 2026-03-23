@@ -1,5 +1,40 @@
 NEXT VERSION
 
+v1.28.1 2026.02.24
+
+- PONRTSYS-15272: mailbox driver for emulation (part2)
+  + Make hardware resources optional for QEMU/HAPS emulation
+  + Disable mbox SPI functionality if SPI sybsystem not enabled in Kernel
+  + Sort the pon_mbox_genl_ops array entries by .cmd field in ascending
+    order to avoid ops validation error in genetlink
+    (general adaptation for Kernel 6.6)
+  + Set the GENL_CMD_CAP_DO capability flag for all ops in
+    the pon_mbox_genl_ops array
+    (general adaptation for Kernel 6.6)
+- PONRTSYS-15144: [TOPAZ] Import FW message interface 4.2 header files
+
+v1.28.0 2026.01.26
+
+- PONRTSYS-14176: [TPZ] Mailbox Driver for Emulation
+  + Load URX-B FW for initial test phase
+  + skip serdes init
+  + disable counter polling if counters_update_timer=0
+- PONRTSYS-15094: [TOPAZ] Import FW message interface 4.1 header files
+- PONRTSYS-15132: eth-drv: Extract gem & alloc into extra file
+  + Created modules for managing gem ports and "allocs" (T-Conts) independently
+    from eth driver.
+  + Event callbacks for ALLOC_ID_LINK/UNLINK are directly registered and handled
+    in new alloc module, the PLOAM state changes are still handled in the network
+    driver and forwarded by function calls.
+- PONRTSYS-9459: Remove shadow storage of qos idx per alloc idx
+- PONRTSYS-15113: Checkpatch Cleanup
+  + Performed checkpatch cleanup and general code improvements.
+- PONRTSYS-15113: Remove support for kernel < 5.15
+  + All code and related checks needed for older kernels is removed.
+- PONRTSYS-15112: unit_tests in pon_mbox_drv are broken
+  + Fix compilation and handling in test "alloc_id_counters_add"
+- PONRTSYS-14177: [TPZ] Update PON FAPI with new messages
+
 v1.27.4 2025.10.06
 
 - PONRTSYS-15079: [TPZ] Move the "Mxl PON HGU vUNI driver" (mxl_pon_hgu_vuni.c) to PON driver repo

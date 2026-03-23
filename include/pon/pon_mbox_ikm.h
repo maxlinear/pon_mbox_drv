@@ -85,7 +85,7 @@ struct pon_dp_flags {
  *	   - PON_STATUS_FW_STATE:	The FW returned a NACK_STATE
  */
 ssize_t pon_mbox_send(unsigned int cmd_id, unsigned int rw,
-		      void *input, size_t input_size,
+		      const void *input, size_t input_size,
 		      void *output, size_t output_size);
 
 /**

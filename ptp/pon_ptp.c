@@ -84,15 +84,13 @@ static bool fw_ready;
  * time_get PTP function
  * Returns a snapshot value of a running ToD clock.
  */
-static int pon_ptp_time_get(struct ptp_clock_info *ptp,
-				struct timespec64 *ts64)
+static int pon_ptp_time_get(struct ptp_clock_info *ptp, struct timespec64 *ts64)
 {
 	int err;
 	struct ponfw_onu_tod_sync fw_tods_out = {0};
 
-	err = pon_mbox_send(PONFW_ONU_TOD_SYNC_CMD_ID, PONFW_READ,
-				NULL, 0,
-				&fw_tods_out, sizeof(fw_tods_out));
+	err = pon_mbox_send(PONFW_ONU_TOD_SYNC_CMD_ID, PONFW_READ, NULL, 0,
+			    &fw_tods_out, sizeof(fw_tods_out));
 	if (err < 0)
 		goto err_dev;
 
@@ -119,7 +117,7 @@ err_dev:
  * time_set function not supported
  */
 static int pon_ptp_time_set(struct ptp_clock_info *ptp,
-				const struct timespec64 *ts64)
+			    const struct timespec64 *ts64)
 {
 	return -EOPNOTSUPP;
 }
@@ -136,7 +134,7 @@ static int pon_ptp_time_adjust(struct ptp_clock_info *ptp, int64_t delta)
  * crosstimestamp_get function not supported
  */
 static int pon_ptp_cts_get(struct ptp_clock_info *ptp,
-			      struct system_device_crosststamp *cts)
+			   struct system_device_crosststamp *cts)
 {
 	return -EOPNOTSUPP;
 }
@@ -145,7 +143,7 @@ static int pon_ptp_cts_get(struct ptp_clock_info *ptp,
  * verify function not supported
  */
 static int pon_ptp_verify(struct ptp_clock_info *ptp, unsigned int pin,
-		      enum ptp_pin_function func, unsigned int chan)
+			  enum ptp_pin_function func, unsigned int chan)
 {
 	return -EOPNOTSUPP;
 }
@@ -182,9 +180,8 @@ static int pon_ptp_synce_status_get(uint32_t *synce_stat)
 	int err;
 	struct ponfw_synce_status fw_synce_stat = {0};
 
-	err = pon_mbox_send(PONFW_SYNCE_STATUS_CMD_ID, PONFW_READ,
-			NULL, 0,
-			&fw_synce_stat, sizeof(fw_synce_stat));
+	err = pon_mbox_send(PONFW_SYNCE_STATUS_CMD_ID, PONFW_READ, NULL, 0,
+			    &fw_synce_stat, sizeof(fw_synce_stat));
 	if (err < 0)
 		return err;
 	if (err != sizeof(fw_synce_stat)) {
@@ -206,9 +203,8 @@ static int pon_ptp_monitor_config(int en)
 	struct ponfw_monitor_config fw_mon_cfg = {0};
 
 	/* Read the current MONITOR_CONFIG value */
-	err = pon_mbox_send(PONFW_MONITOR_CONFIG_CMD_ID, PONFW_READ,
-			NULL, 0,
-			&fw_mon_cfg, sizeof(fw_mon_cfg));
+	err = pon_mbox_send(PONFW_MONITOR_CONFIG_CMD_ID, PONFW_READ, NULL, 0,
+			    &fw_mon_cfg, sizeof(fw_mon_cfg));
 	if (err < 0)
 		return err;
 	if (err != sizeof(fw_mon_cfg)) {
@@ -221,8 +217,7 @@ static int pon_ptp_monitor_config(int en)
 		fw_mon_cfg.pps_time = en;
 
 		err = pon_mbox_send(PONFW_MONITOR_CONFIG_CMD_ID, PONFW_WRITE,
-				&fw_mon_cfg, sizeof(fw_mon_cfg),
-				NULL, 0);
+				    &fw_mon_cfg, sizeof(fw_mon_cfg), NULL, 0);
 		if (err < 0)
 			return err;
 	}
@@ -230,11 +225,11 @@ static int pon_ptp_monitor_config(int en)
 }
 
 /*
- * This function is called by an user application to
+ * This function is called by a user application to
  * start or stop EXTTS event generation.
  */
 static int pon_ptp_enable(struct ptp_clock_info *ptp,
-		      struct ptp_clock_request *rq, int on)
+			  struct ptp_clock_request *rq, int on)
 {
 	struct pon_ptp_priv *ctx;
 	int err;
@@ -248,8 +243,9 @@ static int pon_ptp_enable(struct ptp_clock_info *ptp,
 					break;
 				err = pon_ptp_monitor_config(PPS_TIME_EN);
 				if (err) {
-					dev_err(ctx->dev, "Activating pps time report failed: %i\n",
-					       err);
+					dev_err(ctx->dev,
+						"Activating pps time report failed: %i\n",
+						err);
 					return err;
 				}
 				break;
@@ -274,9 +270,7 @@ static const struct ptp_clock_info pon_ptp_clock_info = {
 	.n_ext_ts	= 1,
 	.n_per_out	= 0,
 	.pps		= 0,
-#if (KERNEL_VERSION(4, 10, 0) < LINUX_VERSION_CODE)
 	.adjfine	= pon_ptp_adjust_fine,
-#endif
 #if (KERNEL_VERSION(6, 2, 0) >= LINUX_VERSION_CODE)
 	.adjfreq	= pon_ptp_adjust_freq,
 #endif
@@ -285,7 +279,7 @@ static const struct ptp_clock_info pon_ptp_clock_info = {
 	.settime64	= pon_ptp_time_set,
 	.getcrosststamp = pon_ptp_cts_get,
 	.enable		= pon_ptp_enable,
-	.verify     = pon_ptp_verify,
+	.verify		= pon_ptp_verify,
 };
 
 /*
@@ -398,9 +392,9 @@ static int pon_ptp_probe(struct platform_device *pdev)
 
 	ctx->ptp_clock = NULL;
 	memcpy(&ctx->ptp_clk_info, &pon_ptp_clock_info,
-			sizeof(pon_ptp_clock_info));
+	       sizeof(pon_ptp_clock_info));
 	snprintf(ctx->ptp_clk_info.name, sizeof(ctx->ptp_clk_info.name),
-			"PONIP TOD %d", ++ptp_instance);
+		 "PONIP TOD %d", ++ptp_instance);
 
 	ctx->ptp_clock = ptp_clock_register(&ctx->ptp_clk_info, NULL);
 	if (IS_ERR(ctx->ptp_clock)) {

@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2020 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2020 - 2025 MaxLinear, Inc.
  * Copyright (c) 2018 - 2020 Intel Corporation
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
@@ -84,18 +84,11 @@ struct cnt_autoupdate {
 	struct counter_twdm_wl_info twdm_wl_info;
 };
 
-static unsigned int update_time_get(struct cnt_autoupdate *c)
-{
-	if (c->update_time_in_s == 0)
-		return PON_COUNTERS_DEFAULT_UPDATE_TIME;
-	return c->update_time_in_s;
-}
-
 static void schedule_counters_update(struct cnt_autoupdate *c,
 				     unsigned long since)
 {
 	unsigned long time =
-		since + msecs_to_jiffies(update_time_get(c) * 1000);
+		since + msecs_to_jiffies(c->update_time_in_s * 1000);
 
 	/* If time is from the past this will execute the callback ASAP */
 	mod_timer(&c->timer, time);
@@ -116,6 +109,9 @@ static void counters_update(struct work_struct *work)
 	unsigned long oldest_time;
 	struct pon_mbox *dev = cnt_autoupdate->dev;
 
+	if (cnt_autoupdate->update_time_in_s == PON_COUNTERS_NO_UPDATE)
+		return;
+
 	if (dev->pon_ip_debug_mode)
 		return;
 
@@ -133,28 +129,12 @@ static void counters_update(struct work_struct *work)
 }
 
 /* A callback for timer */
-#if (KERNEL_VERSION(4, 15, 0) > LINUX_VERSION_CODE)
-static void refresh_counters(unsigned long data)
-{
-	struct cnt_autoupdate *cnt_autoupdate = (struct cnt_autoupdate *)data;
-
-	/* We can't update counters directly here, because
-	 * this function runs in interrupt context (softirq)
-	 * and functions that update counters call pon_mbox_send() which
-	 * calls wait_for_completion(), which can sleep
-	 * We must use a workqueue which runs in process context, where
-	 * sleep is allowed
-	 */
-	schedule_work(&cnt_autoupdate->work);
-}
-#else
 static void refresh_counters(struct timer_list *tl)
 {
 	struct cnt_autoupdate *cnt_autoupdate =
 		container_of(tl, struct cnt_autoupdate, timer);
 	schedule_work(&cnt_autoupdate->work);
 }
-#endif
 
 struct cnt_autoupdate *
 pon_mbox_cnt_autoupdate_create(struct pon_mbox *pon_mbox_dev,
@@ -170,20 +150,20 @@ pon_mbox_cnt_autoupdate_create(struct pon_mbox *pon_mbox_dev,
 	cnt_autoupdate->update_time_in_s = update_time_in_s;
 	cnt_autoupdate->dev = pon_mbox_dev;
 	cnt_autoupdate->twdm_wl_info.trigger_update = 0;
-#if (KERNEL_VERSION(4, 15, 0) > LINUX_VERSION_CODE)
-	setup_timer(&cnt_autoupdate->timer, refresh_counters,
-		    (unsigned long)cnt_autoupdate);
-#else
+	atomic_set(&cnt_autoupdate->running, 0);
+
 	timer_setup(&cnt_autoupdate->timer, refresh_counters, 0);
-#endif
-	atomic_set(&cnt_autoupdate->running, 1);
-	/* Schedule the first update immediately by using current jiffies */
-	schedule_counters_update(cnt_autoupdate, jiffies);
+
+	if (update_time_in_s != PON_COUNTERS_NO_UPDATE) {
+		atomic_set(&cnt_autoupdate->running, 1);
+		/* Schedule the first update immediately by using current jiffies */
+		schedule_counters_update(cnt_autoupdate, jiffies);
+	}
 	return cnt_autoupdate;
 }
 
 static void ploam_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate,
-	unsigned long threshold)
+					unsigned long threshold)
 {
 	union {
 		struct pon_mbox_xgtc_ploam_ds_counters xgtc_ploam_ds;
@@ -265,12 +245,9 @@ static void ploam_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate,
 	}
 
 	dev_dbg(cnt_autoupdate->dev->dev,
-		"Triggered update of %d XGTC_PLOAM_DS %d GTC_PLOAM_DS %d "
-		"XGTC_PLOAM_US %d GTC_PLOAM_US counters\n",
-		num_xgtc_ploam_ds_updates,
-		num_gtc_ploam_ds_updates,
-		num_xgtc_ploam_us_updates,
-		num_gtc_ploam_us_updates);
+		"Triggered update of %d XGTC_PLOAM_DS %d GTC_PLOAM_DS %d XGTC_PLOAM_US %d GTC_PLOAM_US counters\n",
+		num_xgtc_ploam_ds_updates, num_gtc_ploam_ds_updates,
+		num_xgtc_ploam_us_updates, num_gtc_ploam_us_updates);
 }
 
 void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
@@ -303,7 +280,7 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 	int ret = 0;
 
 	update_interval_jiffies =
-		msecs_to_jiffies(update_time_get(cnt_autoupdate) * 1000);
+		msecs_to_jiffies(cnt_autoupdate->update_time_in_s * 1000);
 
 	/* Don't try to refresh counters if mailbox is in_reset */
 	if (cnt_autoupdate->dev->in_reset)
@@ -470,17 +447,10 @@ void pon_mbox_cnt_autoupdate_update(struct cnt_autoupdate *cnt_autoupdate)
 	}
 
 	dev_dbg(cnt_autoupdate->dev->dev,
-		"Triggered update of %d GEM, %d Alloc Id, %d Alloc Lost, "
-		"%d GTC, %d XGTC, "
-		"%d TWDM LODS %d TWDM OPTIC_PL %d TWDM TC\n",
-		num_gem_updates,
-		num_alloc_updates,
-		num_alloc_lost_updates,
-		num_gtc_updates,
-		num_xgtc_updates,
-		num_twdm_lods_updates,
-		num_twdm_optic_pl_updates,
-		num_twdm_tc_updates);
+		"Triggered update of %d GEM, %d Alloc Id, %d Alloc Lost, %d GTC, %d XGTC, %d TWDM LODS %d TWDM OPTIC_PL %d TWDM TC\n",
+		num_gem_updates, num_alloc_updates, num_alloc_lost_updates,
+		num_gtc_updates, num_xgtc_updates, num_twdm_lods_updates,
+		num_twdm_optic_pl_updates, num_twdm_tc_updates);
 
 	if (atomic_read(&cnt_autoupdate->running))
 		ploam_cnt_autoupdate_update(cnt_autoupdate,
@@ -492,6 +462,9 @@ void pon_mbox_cnt_autoupdate_wl_switch(struct cnt_autoupdate *cnt_autoupdate,
 {
 	unsigned long since;
 
+	if (cnt_autoupdate->update_time_in_s == PON_COUNTERS_NO_UPDATE)
+		return;
+
 	/* prepare wavelength switching */
 	cnt_autoupdate->twdm_wl_info.new_twdm_dswlch_id = new_dswlch_id;
 	cnt_autoupdate->twdm_wl_info.new_twdm_uswlch_id = new_uswlch_id;
@@ -499,7 +472,7 @@ void pon_mbox_cnt_autoupdate_wl_switch(struct cnt_autoupdate *cnt_autoupdate,
 
 	/* trigger counter update: current time - counter update time */
 	since = jiffies -
-		msecs_to_jiffies(update_time_get(cnt_autoupdate) * 1000);
+		msecs_to_jiffies(cnt_autoupdate->update_time_in_s * 1000);
 	schedule_counters_update(cnt_autoupdate, since);
 }
 

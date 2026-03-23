@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright (c) 2021 MaxLinear, Inc.
+ * Copyright (c) 2021 -2025 MaxLinear, Inc.
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
  * this software module.
@@ -57,7 +57,6 @@
 #define PON_SHELL_SRAM_CSR_SRAM_INIT_DONE		BIT(2)
 
 #define PON_SHELL_MPLLA_CTRL				0x0C
-
 
 #define PON_SHELL_EXT_CTRL_SEL				0x14
 #define PON_SHELL_EXT_CTRL_SEL_PHY_CTRL_SEL		BIT(0)

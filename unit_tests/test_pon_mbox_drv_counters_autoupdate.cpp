@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright (c) 2022 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2022 - 2025 MaxLinear, Inc.
  * Copyright (c) 2018 - 2019 Intel Corporation
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
@@ -172,7 +172,7 @@ TEST_F(CountersAutoupdate, pon_mbox_cnt_autoupdate_update_multiple_calls_ngpon2)
 	ASSERT_EQ(cmds[PONFW_GTC_COUNTERS_CMD_ID], 1u);
 	ASSERT_EQ(cmds[PONFW_TWDM_TC_COUNTERS_CMD_ID], 1u);
 	ASSERT_EQ(cmds[PONFW_TWDM_LODS_COUNTERS_CMD_ID], 1u);
-	ASSERT_EQ(cmds[PONFW_TWDM_ONU_OPTIC_PL_COUNTERSS_CMD_ID], 1u);
+	ASSERT_EQ(cmds[PONFW_TWDM_ONU_OPTIC_PL_COUNTERS_CMD_ID], 1u);
 	ASSERT_EQ(cmds[PONFW_XGTC_PLOAM_DS_COUNTERS_CMD_ID], 1u);
 	ASSERT_EQ(cmds[PONFW_XGTC_PLOAM_US_COUNTERS_CMD_ID], 1u);
 	ASSERT_EQ(cmds[PONFW_GTC_PLOAM_US_COUNTERS_CMD_ID], 0u);

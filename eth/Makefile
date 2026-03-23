@@ -6,6 +6,8 @@ ccflags-y += \
 obj-$(CONFIG_PON_ETH_DRV)  += mod_pon_eth.o
 mod_pon_eth-objs += \
 	pon_eth.o \
+	pon_eth_fw_alloc.o \
+	pon_eth_fw_gem.o \
 	pon_eth_iphost.o
 
 else

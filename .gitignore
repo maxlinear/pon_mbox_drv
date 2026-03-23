@@ -65,6 +65,9 @@ Module.symvers
 .Module.symvers.cmd
 modules.order
 
+# checkpatch output files
+.checkpatch-camelcase*
+
 # Code::Blocks project files
 *.depend
 *.layout
@@ -95,18 +98,10 @@ doc/latex/dir_*.tex
 doc/latex/doxygen.sty
 doc/latex/*.ttf
 
-syntax: regexp
-^doc/html$
-^doc/xml$
-^\.metadata$
-^\.cproject$
-
-syntax: regexp
-^\.settings/org\.eclipse\.cdt\.codan\.core\.prefs$
-syntax: regexp
-^\.cproject$
-syntax: regexp
-^\.cproject$
+doc/html
+doc/xml
+.metadata
+.cproject
 
 .pkgdir/
 Module.symvers.tmp

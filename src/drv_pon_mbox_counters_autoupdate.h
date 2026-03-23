@@ -1,8 +1,11 @@
 /******************************************************************************
- * Copyright (c) 2018 Intel Corporation
+ *
+ * Copyright (c) 2023 - 2025 MaxLinear, Inc.
+ * Copyright (c) 2018 - 2020 Intel Corporation
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
  * this software module.
+ *
  ******************************************************************************/
 
 #ifndef DRV_PON_MBOX_COUNTERS_AUTOUPDATE_H
@@ -10,6 +13,7 @@
 
 /* The default counter update time in seconds */
 #define PON_COUNTERS_DEFAULT_UPDATE_TIME 840
+#define PON_COUNTERS_NO_UPDATE		 0
 
 struct pon_mbox;
 struct cnt_autoupdate;
@@ -60,7 +64,5 @@ void pon_mbox_cnt_autoupdate_wl_switch(struct cnt_autoupdate *cnt_autoupdate,
 void pon_mbox_cnt_autoupdate_destroy(struct cnt_autoupdate *cnt_autoupdate);
 
 /*! @} */ /* PON_MBOX_REFERENCE_COUNTERS */
-
-
 
 #endif /* end of include guard: DRV_PON_MBOX_COUNTERS_AUTOUPDATE_H */

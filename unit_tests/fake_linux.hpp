@@ -4,6 +4,8 @@
 #include <mutex>
 #include <memory>
 
+#define __packed __attribute__((packed))
+
 #define container_of(address, type, field) \
 	((type *)( \
 		(char *)(address) - \
@@ -36,8 +38,6 @@
 
 #define mutex_destroy(type) (type)->mutex = nullptr
 
-#define del_timer(x) noop
-
 #define flush_work(x) noop
 
 #define dev_dbg(foo, ...) (void)(foo)
@@ -58,10 +58,10 @@
 
 #define msecs_to_jiffies(x) (x)
 
-#define setup_timer(timer, fun, flags) \
-	do { (void) (timer); (void)(fun); (void)(flags); } while (0)
 #define timer_setup(timer, fun, flags) \
 	do { (void) (timer); (void)(fun); (void)(flags); } while (0)
+
+#define del_timer_sync(x) noop
 
 #define INIT_WORK(work, fun) do { (void)work; (void)fun; } while (0)
 

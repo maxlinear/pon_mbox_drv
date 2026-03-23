@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2020 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2020 - 2025 MaxLinear, Inc.
  * Copyright (c) 2017 - 2020 Intel Corporation
  * Copyright (c) 2016 Lantiq Beteiligungs-GmbH & Co. KG
  *
@@ -16,7 +16,6 @@
 
 #ifndef __DRV_PON_MBOX_H
 #define __DRV_PON_MBOX_H
-
 
 #include <pon/pon_ip_msg.h>
 #include <pon/pon_mbox_ikm.h>
@@ -252,13 +251,15 @@
 /* The HW version of the PON IP used in PRX300 mailbox type A */
 #define PON_MBOX_HW_VER_A_TYPE		2
 /* The HW version of the PON IP used in PRX300 mailbox type B */
-#define PON_MBOX_HW_VER_B_TYPE		7
+#define PON_MBOX_HW_VER_B_TYPE		(PONFW_VERSION_HWVERSION_PRX_B)
 /* The HW version of the PON IP used in URX800 mailbox type A */
-#define PON_MBOX_HW_VER_URX_A_TYPE	8
+#define PON_MBOX_HW_VER_URX_A_TYPE	(PONFW_VERSION_HWVERSION_URX_A)
 /* The HW version of the PON IP used in URX800 mailbox type B */
-#define PON_MBOX_HW_VER_URX_B_TYPE	9
+#define PON_MBOX_HW_VER_URX_B_TYPE	(PONFW_VERSION_HWVERSION_URX_B)
 /* The HW version of the PON IP used in URX800 mailbox type C */
-#define PON_MBOX_HW_VER_URX_C_TYPE	10
+#define PON_MBOX_HW_VER_URX_C_TYPE	(PONFW_VERSION_HWVERSION_URX_C)
+/* The HW version of the PON IP used in TPZ EMULATION mailbox */
+#define PON_MBOX_HW_VER_TPZ_EMU_TYPE	(PONFW_VERSION_HWVERSION_TPZ)
 
 /* PON IP Hardware Identifier. */
 #define  PON_MBOX_FUSE0_ID_MASK		0x00ffff00
@@ -389,7 +390,7 @@ struct pon_msg_header {
 	 */
 	u32 rw : 1;
 #endif
-}  __attribute__((packed));
+} __packed;
 
 #define UNUSED(x) (void)(x)
 
@@ -398,16 +399,16 @@ struct pon_msg_header {
 #endif
 
 /** Loss of signal (GTC, XGTC, optical interface) */
-#define PON_ALARM_ID_STATIC_LOS   0x0000
+#define PON_ALARM_ID_STATIC_LOS 0x0000
 /** Persistent crossbar access error */
-#define PON_ALARM_ID_STATIC_PCE   0x0017
+#define PON_ALARM_ID_STATIC_PCE 0x0017
 /** Persistent SerDes Error */
-#define PON_ALARM_ID_STATIC_PSE   0x0018
+#define PON_ALARM_ID_STATIC_PSE 0x0018
 /**
  * Firmware version error, the loaded firmware does not fit to the PON IP
  * hardware version.
  */
-#define PON_ALARM_ID_EDGE_FWVERR	0x0101
+#define PON_ALARM_ID_EDGE_FWVERR 0x0101
 
 /** Sources where the message could be coming from */
 enum pon_mbox_msg_origin {

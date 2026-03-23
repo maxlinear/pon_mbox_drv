@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright (c) 2020 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2020 - 2025 MaxLinear, Inc.
  * Copyright (c) 2017 - 2020 Intel Corporation
  * Copyright (c) 2016 Lantiq Beteiligungs-GmbH & Co. KG
  *
@@ -57,6 +57,7 @@ enum {
 	PON_MBOX_A_DP_CONFIG,  /* Nested */
 	__PON_MBOX_A_MAX,
 };
+
 #define PON_MBOX_A_MAX (__PON_MBOX_A_MAX - 1)
 
 enum {
@@ -77,6 +78,7 @@ enum {
 	PON_MBOX_A_CNT_GTC_PLOAM_CRC_ERRORS,
 	__PON_MBOX_A_CNT_GTC_MAX,
 };
+
 #define PON_MBOX_A_CNT_GTC_MAX (__PON_MBOX_A_CNT_GTC_MAX - 1)
 
 enum {
@@ -89,6 +91,7 @@ enum {
 	PON_MBOX_A_CNT_XGTC_PAD,
 	__PON_MBOX_A_CNT_XGTC_MAX,
 };
+
 #define PON_MBOX_A_CNT_XGTC_MAX (__PON_MBOX_A_CNT_XGTC_MAX - 1)
 
 enum {
@@ -103,6 +106,7 @@ enum {
 	PON_MBOX_A_CNT_GEM_PORT_PAD,
 	__PON_MBOX_A_CNT_GEM_PORT_MAX,
 };
+
 #define PON_MBOX_A_CNT_GEM_PORT_MAX (__PON_MBOX_A_CNT_GEM_PORT_MAX - 1)
 
 enum {
@@ -112,6 +116,7 @@ enum {
 	PON_MBOX_A_CNT_ALLOC_PAD,
 	__PON_MBOX_A_CNT_ALLOC_MAX
 };
+
 #define PON_MBOX_A_CNT_ALLOC_MAX (__PON_MBOX_A_CNT_ALLOC_MAX - 1)
 
 enum {
@@ -120,6 +125,7 @@ enum {
 	PON_MBOX_A_CNT_ALLOC_DISCARD_PAD,
 	__PON_MBOX_A_CNT_ALLOC_DISCARD_MAX
 };
+
 #define PON_MBOX_A_CNT_ALLOC_DISCARD_MAX \
 	(__PON_MBOX_A_CNT_ALLOC_DISCARD_MAX - 1)
 
@@ -128,6 +134,7 @@ enum {
 	PON_MBOX_A_CNT_ALLOC_DISCARD_ITEM_PAD,
 	__PON_MBOX_A_CNT_ALLOC_DISCARD_ITEM_MAX
 };
+
 #define PON_MBOX_A_CNT_ALLOC_DISCARD_ITEM_MAX \
 	(__PON_MBOX_A_CNT_ALLOC_DISCARD_ITEM_MAX - 1)
 
@@ -147,6 +154,7 @@ enum {
 	PON_MBOX_A_CNT_ETH_PAD,
 	__PON_MBOX_A_CNT_ETH_MAX
 };
+
 #define PON_MBOX_A_CNT_ETH_MAX \
 	(__PON_MBOX_A_CNT_ETH_MAX - 1)
 
@@ -187,6 +195,7 @@ enum {
 	PON_MBOX_C_TC_PLOAM_US_COUNTERS,
 	__PON_MBOX_C_MAX,
 };
+
 #define PON_MBOX_C_MAX (__PON_MBOX_C_MAX - 1)
 
 /* DS Wavelength Channel ID: selects the accumulated values */
@@ -289,6 +298,7 @@ enum pon_mbox_perm_command_group {
 	PON_MBOX_PERM_BC_KEY = 1,
 	__PON_MBOX_PERM_MAX
 };
+
 #define PON_MBOX_PERM_MAX (__PON_MBOX_PERM_MAX - 1)
 
 /**
@@ -536,19 +546,18 @@ enum {
 #define PON_MBOX_A_CNT_TWDM_TC_ITEM_MAX \
 	(__PON_MBOX_A_CNT_TWDM_TC_ITEM_MAX - 1)
 
-#define PON_FEVT_CMD_GET(FAKE_EVENT)\
+#define PON_FEVT_CMD_GET(FAKE_EVENT) \
 	(unsigned short)(((FAKE_EVENT).cmd_len >> 16) & 0x0000FFFF)
-#define PON_FEVT_CMD_SET(FAKE_EVENT, CMD)\
-	do { (FAKE_EVENT).cmd_len = ((FAKE_EVENT).cmd_len & 0x0000FFFF) \
-		| (((__u32)(CMD) << 16) & 0xFFFF0000); } while(0)
-#define PON_FEVT_LEN_GET(FAKE_EVENT)\
+#define PON_FEVT_CMD_SET(FAKE_EVENT, CMD) \
+	(FAKE_EVENT).cmd_len = ((FAKE_EVENT).cmd_len & 0x0000FFFF) | \
+			       (((__u32)(CMD) << 16) & 0xFFFF0000)
+#define PON_FEVT_LEN_GET(FAKE_EVENT) \
 	(unsigned short)((FAKE_EVENT).cmd_len & 0x0000FFFF)
-#define PON_FEVT_LEN_SET(FAKE_EVENT, LEN)\
-	do { (FAKE_EVENT).cmd_len = ((FAKE_EVENT).cmd_len & 0xFFFF0000) \
-		| ((__u32)(LEN) & 0x0000FFFF); } while(0)
+#define PON_FEVT_LEN_SET(FAKE_EVENT, LEN) \
+	(FAKE_EVENT).cmd_len = ((FAKE_EVENT).cmd_len & 0xFFFF0000) | \
+			       ((__u32)(LEN) & 0x0000FFFF)
 
-/** Header structure fake event
- */
+/** Header structure fake event */
 struct pon_fake_event {
 	/** Hi-Word: Command ID, LO-Word: Length of the following data */
 	__u32 cmd_len;

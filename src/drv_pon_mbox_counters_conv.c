@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2020 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2020 - 2025 MaxLinear, Inc.
  * Copyright (c) 2018 - 2020 Intel Corporation
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
@@ -267,8 +267,8 @@ int pon_mbox_cnt_twdm_lods_fw2pon(struct ponfw_twdm_lods_counters *in,
 }
 
 int pon_mbox_cnt_twdm_optic_pl_fw2pon(
-			struct ponfw_twdm_onu_optic_pl_counters *in,
-			struct pon_mbox_twdm_optic_pl_counters *out)
+	struct ponfw_twdm_onu_optic_pl_counters *in,
+	struct pon_mbox_twdm_optic_pl_counters *out)
 {
 	if (!in || !out)
 		return -EINVAL;
@@ -280,9 +280,8 @@ int pon_mbox_cnt_twdm_optic_pl_fw2pon(
 	return 0;
 }
 
-int pon_mbox_cnt_twdm_tc_fw2pon(
-			struct ponfw_twdm_tc_counters *in,
-			struct pon_mbox_twdm_tc_counters *out)
+int pon_mbox_cnt_twdm_tc_fw2pon(struct ponfw_twdm_tc_counters *in,
+				struct pon_mbox_twdm_tc_counters *out)
 {
 	unsigned int i = 0;
 	unsigned int min_size;
@@ -303,8 +302,8 @@ int pon_mbox_cnt_twdm_tc_fw2pon(
 }
 
 int pon_mbox_cnt_xgtc_ploam_ds_fw2pon(
-			struct ponfw_xgtc_ploam_ds_counters *in,
-			struct pon_mbox_xgtc_ploam_ds_counters *out)
+	struct ponfw_xgtc_ploam_ds_counters *in,
+	struct pon_mbox_xgtc_ploam_ds_counters *out)
 {
 	if (!in || !out)
 		return -EINVAL;
@@ -336,9 +335,8 @@ int pon_mbox_cnt_xgtc_ploam_ds_fw2pon(
 	return 0;
 }
 
-int pon_mbox_cnt_gtc_ploam_ds_fw2pon(
-			struct ponfw_gtc_ploam_ds_counters *in,
-			struct pon_mbox_gtc_ploam_ds_counters *out)
+int pon_mbox_cnt_gtc_ploam_ds_fw2pon(struct ponfw_gtc_ploam_ds_counters *in,
+				     struct pon_mbox_gtc_ploam_ds_counters *out)
 {
 	if (!in || !out)
 		return -EINVAL;
@@ -370,9 +368,8 @@ int pon_mbox_cnt_gtc_ploam_ds_fw2pon(
 	return 0;
 }
 
-int pon_mbox_cnt_gtc_ploam_us_fw2pon(
-			struct ponfw_gtc_ploam_us_counters *in,
-			struct pon_mbox_gtc_ploam_us_counters *out)
+int pon_mbox_cnt_gtc_ploam_us_fw2pon(struct ponfw_gtc_ploam_us_counters *in,
+				     struct pon_mbox_gtc_ploam_us_counters *out)
 {
 	if (!in || !out)
 		return -EINVAL;
@@ -392,8 +389,8 @@ int pon_mbox_cnt_gtc_ploam_us_fw2pon(
 }
 
 int pon_mbox_cnt_xgtc_ploam_us_fw2pon(
-			struct ponfw_xgtc_ploam_us_counters *in,
-			struct pon_mbox_xgtc_ploam_us_counters *out)
+	struct ponfw_xgtc_ploam_us_counters *in,
+	struct pon_mbox_xgtc_ploam_us_counters *out)
 {
 	if (!in || !out)
 		return -EINVAL;

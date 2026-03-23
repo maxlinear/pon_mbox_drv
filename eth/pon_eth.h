@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright (c) 2020 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2020 - 2025 MaxLinear, Inc.
  * Copyright (C) 2019 - 2020 Intel Corporation
  *
  *  This program is free software; you can redistribute it and/or modify it
@@ -24,11 +24,11 @@
 #include <linux/spinlock.h>
 
 /** Reserve the required number of queues for PON port */
-#define DEFAULT_NUM_OF_QUEUES		64
+#define DEFAULT_NUM_OF_QUEUES 64
 /** Reserve the required number of schedulers for PON port */
-#define DEFAULT_NUM_OF_SCHEDULERS	64
+#define DEFAULT_NUM_OF_SCHEDULERS 64
 /** Set to this value in case no queue is assigned by the datapath lib */
-#define PON_ETH_QUEUE_UNASSIGNED	-1
+#define PON_ETH_QUEUE_UNASSIGNED -1
 
 /** SoC-specific data. */
 struct ltq_pon_net_soc_data {
@@ -54,6 +54,7 @@ struct ltq_pon_net_hw {
 	struct list_head tcont_list;
 	struct list_head gem_list;
 	struct list_head iphost_list;
+	/* locking for iphost_list */
 	spinlock_t iphost_lock;
 	/** Queue lookup mode.
 	 *  7 6 5 4 3 2 1 0

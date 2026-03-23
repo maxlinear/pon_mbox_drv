@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2022 MaxLinear, Inc.
+ * Copyright (c) 2022 - 2025 MaxLinear, Inc.
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
  * this software module.
@@ -315,19 +315,11 @@ int pon_sfp_probe(struct pon_mbox *pon, struct device_node *np)
 	pon->sfp = sfp_priv;
 
 	for (i = 0; i < MAX_SFP_EEPROM; i++) {
-#if (KERNEL_VERSION(5, 3, 0) <= LINUX_VERSION_CODE)
 		client = i2c_new_dummy_device(adapter, 0x50 + i);
 		if (IS_ERR(client)) {
 			ret = PTR_ERR(client);
 			goto err;
 		}
-#else
-		client = i2c_new_dummy(adapter, 0x50 + i);
-		if (!client) {
-			ret = -ENOENT;
-			goto err;
-		}
-#endif
 
 		if (!client->dev.driver ||
 		    !try_module_get(client->dev.driver->owner)) {

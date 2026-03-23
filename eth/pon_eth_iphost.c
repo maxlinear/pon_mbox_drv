@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright (c) 2020 - 2023 MaxLinear, Inc.
+ * Copyright (c) 2020 - 2025 MaxLinear, Inc.
  * Copyright (C) 2020 Intel Corporation
  *
  *  This program is free software; you can redistribute it and/or modify it
@@ -91,8 +91,8 @@ static netdev_tx_t iphost_start_xmit(struct sk_buff *skb,
 	if (dp_get_netif_subifid(iphost->link, NULL, NULL, NULL,
 				 &dp_subif, 0)) {
 		kfree_skb(skb);
-		pr_err("%s: dp_get_netif_subifid failed for %s\n",
-			__func__, iphost->link->name);
+		pr_err("%s: dp_get_netif_subifid failed for %s\n", __func__,
+		       iphost->link->name);
 		iphost->stats.tx_dropped++;
 		return NETDEV_TX_BUSY;
 	}
@@ -123,21 +123,6 @@ static netdev_tx_t iphost_start_xmit(struct sk_buff *skb,
 	return NETDEV_TX_OK;
 }
 
-#if (KERNEL_VERSION(4, 11, 0) > LINUX_VERSION_CODE)
-static struct rtnl_link_stats64 *
-iphost_get_stats(struct net_device *iphost_ndev,
-		 struct rtnl_link_stats64 *storage)
-{
-#ifndef CONFIG_DPM_DATAPATH_MIB
-	struct ltq_pon_net_iphost *iphost = netdev_priv(iphost_ndev);
-
-	*storage = iphost->stats;
-#else
-	dp_get_netif_stats(iphost, NULL, storage, 0);
-#endif
-	return storage;
-}
-#else
 static void iphost_get_stats(struct net_device *iphost_ndev,
 			     struct rtnl_link_stats64 *storage)
 {
@@ -149,7 +134,6 @@ static void iphost_get_stats(struct net_device *iphost_ndev,
 	dp_get_netif_stats(iphost, NULL, storage, 0);
 #endif
 }
-#endif
 
 /** Returns ifindex */
 static int iphost_get_iflink(const struct net_device *iphost_ndev)
@@ -176,7 +160,7 @@ static int iphost_mdev_open(struct net_device *hw_ndev)
 }
 
 static netdev_tx_t iphost_mdev_start_xmit(struct sk_buff *skb,
-					 struct net_device *ndev)
+					  struct net_device *ndev)
 {
 	kfree_skb(skb);
 	return NETDEV_TX_OK;
@@ -265,18 +249,11 @@ static int iphost_dp_deregister(struct ltq_pon_net_iphost *iphost,
 }
 
 /** Creates a new IP host on the interface given in IFLA_LINK. */
-#if (KERNEL_VERSION(4, 13, 0) > LINUX_VERSION_CODE)
-static int iphost_newlink(struct net *src_net,
-			  struct net_device *iphost_ndev,
-			  struct nlattr *tb[],
-			  struct nlattr *data[])
-#else
 static int iphost_newlink(struct net *src_net,
 			  struct net_device *iphost_ndev,
 			  struct nlattr *tb[],
 			  struct nlattr *data[],
 			  struct netlink_ext_ack *extack)
-#endif
 {
 	struct ltq_pon_net_iphost *iphost = netdev_priv(iphost_ndev);
 	struct net_device *link_ndev;
@@ -368,11 +345,7 @@ static void iphost_setup(struct net_device *iphost_ndev)
 	ether_setup(iphost_ndev);
 
 	iphost_ndev->netdev_ops = &iphost_ops;
-#if (KERNEL_VERSION(4, 11, 0) > LINUX_VERSION_CODE)
-	iphost_ndev->destructor = free_netdev;
-#else
 	iphost_ndev->priv_destructor = free_netdev;
-#endif
 
 	eth_hw_addr_random(iphost_ndev);
 
@@ -493,7 +466,6 @@ static int32_t iphost_dp_rx(struct net_device *ndev,
 		netdev_err(rdev, "received data on unknown device\n");
 		dev_kfree_skb_any(skb);
 		return -1;
-
 	}
 
 	iphost = netdev_priv(rdev);

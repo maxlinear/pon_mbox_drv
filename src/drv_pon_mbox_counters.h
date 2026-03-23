@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2020 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2020 - 2025 MaxLinear, Inc.
  * Copyright (c) 2018 - 2020 Intel Corporation
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
@@ -558,7 +558,6 @@ struct pon_mbox_xgtc_ploam_us_counters
 *pon_mbox_cnt_xgtc_ploam_us_table_get(u8 twdm_dswlch_id,
 				      struct counters_state *state);
 
-
 int pon_mbox_cnt_xgtc_ploam_us_table_add(
 				struct pon_mbox_xgtc_ploam_us_counters *cnt,
 				struct counters_state *state);
@@ -636,7 +635,6 @@ int pon_mbox_used_gem_ports_get(u8 *gem_port_idx,
 int pon_mbox_used_alloc_ids_get(u8 *alloc_id_used,
 				unsigned int size,
 				struct counters_state *state);
-
 
 /**
  * @brief Read the update times of each counter.

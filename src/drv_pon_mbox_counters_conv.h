@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright (c) 2020 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2020 - 2025 MaxLinear, Inc.
  * Copyright (c) 2018 - 2020 Intel Corporation
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
@@ -140,8 +140,8 @@ int pon_mbox_cnt_twdm_lods_fw2pon(struct ponfw_twdm_lods_counters *in,
  * @return 0 on success, -EINVAL on invalid structures
  */
 int pon_mbox_cnt_twdm_optic_pl_fw2pon(
-			struct ponfw_twdm_onu_optic_pl_counters *in,
-			struct pon_mbox_twdm_optic_pl_counters *out);
+	struct ponfw_twdm_onu_optic_pl_counters *in,
+	struct pon_mbox_twdm_optic_pl_counters *out);
 
 /**
  * @brief Converts firmware structure data into PON structure format.

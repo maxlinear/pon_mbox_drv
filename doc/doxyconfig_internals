@@ -4,7 +4,7 @@
 # Project related configuration options
 #---------------------------------------------------------------------------
 DOXYFILE_ENCODING      = UTF-8
-PROJECT_NAME           = "PON Mailbox driver"
+PROJECT_NAME           = "PON Mailbox driver - internals"
 PROJECT_NUMBER         = 1.28.1
 PROJECT_BRIEF          =
 PROJECT_LOGO           =
@@ -22,7 +22,7 @@ FULL_PATH_NAMES        = NO
 STRIP_FROM_PATH        =
 STRIP_FROM_INC_PATH    =
 SHORT_NAMES            = NO
-JAVADOC_AUTOBRIEF      = YES
+JAVADOC_AUTOBRIEF      = NO
 JAVADOC_BANNER         = NO
 QT_AUTOBRIEF           = NO
 MULTILINE_CPP_IS_BRIEF = NO
@@ -38,14 +38,14 @@ OPTIMIZE_OUTPUT_VHDL   = NO
 OPTIMIZE_OUTPUT_SLICE  = NO
 EXTENSION_MAPPING      =
 MARKDOWN_SUPPORT       = YES
-TOC_INCLUDE_HEADINGS   = 0
+TOC_INCLUDE_HEADINGS   = 5
 MARKDOWN_ID_STYLE      = DOXYGEN
 AUTOLINK_SUPPORT       = YES
 BUILTIN_STL_SUPPORT    = NO
 CPP_CLI_SUPPORT        = NO
 SIP_SUPPORT            = NO
 IDL_PROPERTY_SUPPORT   = YES
-DISTRIBUTE_GROUP_DOC   = YES
+DISTRIBUTE_GROUP_DOC   = NO
 GROUP_NESTED_COMPOUNDS = NO
 SUBGROUPING            = YES
 INLINE_GROUPED_CLASSES = NO
@@ -63,7 +63,7 @@ EXTRACT_PRIV_VIRTUAL   = NO
 EXTRACT_PACKAGE        = NO
 EXTRACT_STATIC         = YES
 EXTRACT_LOCAL_CLASSES  = NO
-EXTRACT_LOCAL_METHODS  = NO
+EXTRACT_LOCAL_METHODS  = YES
 EXTRACT_ANON_NSPACES   = NO
 RESOLVE_UNNAMED_PARAMS = YES
 HIDE_UNDOC_MEMBERS     = NO
@@ -77,7 +77,7 @@ HIDE_COMPOUND_REFERENCE= NO
 SHOW_HEADERFILE        = YES
 SHOW_INCLUDE_FILES     = YES
 SHOW_GROUPED_MEMB_INC  = NO
-FORCE_LOCAL_INCLUDES   = NO
+FORCE_LOCAL_INCLUDES   = YES
 INLINE_INFO            = YES
 SORT_MEMBER_DOCS       = YES
 SORT_BRIEF_DOCS        = NO
@@ -114,23 +114,17 @@ WARN_LOGFILE           =
 #---------------------------------------------------------------------------
 # Configuration options related to the input files
 #---------------------------------------------------------------------------
-INPUT                  = ../src/drv_pon_mbox.c \
-                         ../src/drv_pon_mbox.h \
-                         ../src/drv_pon_mbox_counters.h \
-                         ../src/drv_pon_mbox_counters_autoupdate.h \
-                         ../src/drv_pon_mbox_counters_conv.h \
-                         ../src/drv_pon_mbox_counters_update.h \
-                         ../include/pon/pon_mbox.h \
-                         ../include/pon/pon_mbox_ikm.h \
-                         ../include/pon/pon_mbox_counters.h \
-                         ../cli/ponmbox.c \
-                         ../eth/
+INPUT                  = ../eth/ \
+                         ../include/ \
+                         ../ptp/ \
+                         ../src/ \
+                         ../vuni/
 INPUT_ENCODING         = UTF-8
 INPUT_FILE_ENCODING    =
 FILE_PATTERNS          = *.c \
                          *.h
 RECURSIVE              = NO
-EXCLUDE                =
+EXCLUDE                = ../include/pon/pon_ip_msg.h
 EXCLUDE_SYMLINKS       = NO
 EXCLUDE_PATTERNS       = mod_*.c
 EXCLUDE_SYMBOLS        =
@@ -149,7 +143,7 @@ FORTRAN_COMMENT_AFTER  = 72
 #---------------------------------------------------------------------------
 SOURCE_BROWSER         = YES
 INLINE_SOURCES         = NO
-STRIP_CODE_COMMENTS    = YES
+STRIP_CODE_COMMENTS    = NO
 REFERENCED_BY_RELATION = YES
 REFERENCES_RELATION    = YES
 REFERENCES_LINK_SOURCE = YES
@@ -224,7 +218,7 @@ MATHJAX_FORMAT         = HTML-CSS
 MATHJAX_RELPATH        =
 MATHJAX_EXTENSIONS     =
 MATHJAX_CODEFILE       =
-SEARCHENGINE           = NO
+SEARCHENGINE           = YES
 SERVER_BASED_SEARCH    = NO
 EXTERNAL_SEARCH        = NO
 SEARCHENGINE_URL       =
@@ -323,7 +317,7 @@ EXTERNAL_PAGES         = YES
 # Configuration options related to diagram generator tools
 #---------------------------------------------------------------------------
 HIDE_UNDOC_RELATIONS   = YES
-HAVE_DOT               = NO
+HAVE_DOT               = YES
 DOT_NUM_THREADS        = 0
 DOT_COMMON_ATTR        = "fontname=Helvetica,fontsize=10"
 DOT_EDGE_ATTR          = "labelfontname=Helvetica,labelfontsize=10"

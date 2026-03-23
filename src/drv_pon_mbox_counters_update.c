@@ -18,7 +18,7 @@
 #include <drv_pon_mbox_counters_update.h>
 
 #ifndef BIT_ULL
-#define BIT_ULL(nr)  (1ULL << (nr))
+#define BIT_ULL(nr) (1ULL << (nr))
 #endif
 
 /* Each of indexes below points to counter-specific auxiliary control data
@@ -27,10 +27,10 @@
  * data it marks the need of auxiliary pon_mbox_send() call
  */
 enum cnt_ctrl_aux_idx {
-	NONE_CNT		= -1,
-	ALLOC_BW_CNT		= 0,
-	GTC_ENHANCED_CNT	= 1,
-	MAX_CTRL_AUX_CNT	= 2,
+	NONE_CNT = -1,
+	ALLOC_BW_CNT = 0,
+	GTC_ENHANCED_CNT = 1,
+	MAX_CTRL_AUX_CNT = 2,
 };
 
 /* Results of counters-specific functions *_counters_init() marking if given
@@ -38,9 +38,9 @@ enum cnt_ctrl_aux_idx {
  */
 enum cnt_init_status {
 	/* Update counter */
-	CNT_UPDATE_READY	= 0,
+	CNT_UPDATE_READY = 0,
 	/* Do not update counter */
-	CNT_UPDATE_SKIP		= 1
+	CNT_UPDATE_SKIP = 1
 };
 
 /* Unified counter-specific, caller interface data
@@ -168,7 +168,8 @@ void gem_port_id_write_update(u8 gem_port_idx)
 
 	err = pon_mbox_cnt_gem_port_add(gem_port_idx, pon->cnt_state);
 	if (err == -EEXIST) {
-		dev_dbg(pon->dev, "Adding GEM port %u to counter storage was not necessary, because it was already added\n",
+		dev_dbg(pon->dev,
+			"Adding GEM port %u to counter storage was not necessary, because it was already added\n",
 			gem_port_idx);
 		return;
 	}
@@ -187,9 +188,9 @@ void gem_port_id_remove_update(u8 gem_port_idx)
 
 	err = pon_mbox_cnt_gem_port_del(gem_port_idx, pon->cnt_state);
 	if (err < 0 && err != -ENOENT)
-		dev_err(pon->dev, "cannot delete GEM %u port from storage: err: %i\n",
-			gem_port_idx,
-			err);
+		dev_err(pon->dev,
+			"cannot delete GEM %u port from storage: err: %i\n",
+			gem_port_idx, err);
 }
 EXPORT_SYMBOL(gem_port_id_remove_update);
 
@@ -232,22 +233,22 @@ static int gem_port_counters_update(union pon_cnt *cnt, u8 port_idx,
 	struct ponfw_gem_port_counters *fw_output =
 		&cnt_io_grp->prime.out.gem_port;
 	struct pon_mbox_gem_port_counters *counters;
-	struct pon_mbox_gem_port_counters fw_counters = {0};
+	struct pon_mbox_gem_port_counters fw_counters = { 0 };
 	int err;
 
 	(void)pon_mbox_cnt_gem_port_fw2pon(fw_output, &fw_counters);
 
 	pon_mbox_cnt_lock(pon_mbox_dev->cnt_state);
 
-	counters = pon_mbox_cnt_gem_port_table_get(PON_MBOX_D_DSWLCH_ID_CURR,
-					port_idx, pon_mbox_dev->cnt_state);
+	counters = pon_mbox_cnt_gem_port_table_get(
+		PON_MBOX_D_DSWLCH_ID_CURR, port_idx, pon_mbox_dev->cnt_state);
 
 	/* This workaround is added because some of GEM ports are not created by
 	 * calling FAPI functions and in this case they are not added to the
 	 * storage. It is called when we want to get counters for GEM port which
 	 * is not in storage only for the first time.
 	 */
-	if (counters == NULL) {
+	if (!counters) {
 		err = pon_mbox_cnt_gem_port_add(port_idx,
 						pon_mbox_dev->cnt_state);
 		if (err < 0) {
@@ -257,10 +258,10 @@ static int gem_port_counters_update(union pon_cnt *cnt, u8 port_idx,
 			goto cnt_err;
 		}
 
-		counters = pon_mbox_cnt_gem_port_table_get
-					(PON_MBOX_D_DSWLCH_ID_CURR, port_idx,
-					 pon_mbox_dev->cnt_state);
-		if (counters == NULL) {
+		counters = pon_mbox_cnt_gem_port_table_get(
+			PON_MBOX_D_DSWLCH_ID_CURR, port_idx,
+			pon_mbox_dev->cnt_state);
+		if (!counters) {
 			dev_err(pon_mbox_dev->dev,
 				"cannot get counters table from storage\n");
 			err = -ENOENT;
@@ -268,12 +269,11 @@ static int gem_port_counters_update(union pon_cnt *cnt, u8 port_idx,
 		}
 	}
 
-	err = pon_mbox_cnt_gem_port_table_add(port_idx,
-					      &fw_counters,
+	err = pon_mbox_cnt_gem_port_table_add(port_idx, &fw_counters,
 					      pon_mbox_dev->cnt_state);
 	if (err) {
-		dev_err(pon_mbox_dev->dev, "cannot add counters to storage: err: %i\n",
-			err);
+		dev_err(pon_mbox_dev->dev,
+			"cannot add counters to storage: err: %i\n", err);
 		goto cnt_err;
 	}
 
@@ -287,8 +287,9 @@ cnt_err:
 	return err;
 }
 
-static void pon_mbox_cnt_gem_port_last_update_update(u8 port_idx,
-						   struct counters_state *state)
+static void
+pon_mbox_cnt_gem_port_last_update_update(u8 port_idx,
+					 struct counters_state *state)
 {
 	mutex_lock(&state->lock);
 	state->last_update.gem_port_counters[port_idx] = jiffies;
@@ -307,9 +308,9 @@ void alloc_id_write_update(u8 alloc_idx)
 
 	err = pon_mbox_cnt_alloc_id_add(alloc_idx, pon->cnt_state);
 	if (err < 0 && err != -EEXIST)
-		dev_err(pon->dev, "cannot add Alloc ID %u to storage: err: %i\n",
-			alloc_idx,
-			err);
+		dev_err(pon->dev,
+			"cannot add Alloc ID %u to storage: err: %i\n",
+			alloc_idx, err);
 }
 EXPORT_SYMBOL(alloc_id_write_update);
 
@@ -325,9 +326,9 @@ void alloc_id_remove_update(u8 alloc_idx)
 
 	err = pon_mbox_cnt_alloc_id_del(alloc_idx, pon->cnt_state);
 	if (err < 0 && err != -ENOENT)
-		dev_err(pon->dev, "cannot delete Alloc ID %u from storage: err: %i\n",
-			alloc_idx,
-			err);
+		dev_err(pon->dev,
+			"cannot delete Alloc ID %u from storage: err: %i\n",
+			alloc_idx, err);
 }
 EXPORT_SYMBOL(alloc_id_remove_update);
 
@@ -370,7 +371,7 @@ static int alloc_counters_update(union pon_cnt *cnt, u8 port_idx,
 		&cnt_io_grp->prime.out.aid;
 	struct ponfw_alloc_bw *abw_fw_output = &cnt_io_grp->aux.out.abw;
 	struct pon_alloc_counters *counters;
-	struct pon_alloc_counters fw_counters = {0};
+	struct pon_alloc_counters fw_counters = { 0 };
 	int err;
 
 	(void)pon_mbox_cnt_alloc_id_fw2pon(aid_fw_output, &fw_counters);
@@ -387,30 +388,31 @@ static int alloc_counters_update(union pon_cnt *cnt, u8 port_idx,
 	 * storage. It is called when we want to get counters for Alloc ID which
 	 * is not in storage only for the first time.
 	 */
-	if (counters == NULL) {
+	if (!counters) {
 		err = pon_mbox_cnt_alloc_id_add(port_idx,
 						pon_mbox_dev->cnt_state);
 		if (err < 0) {
-			dev_err(pon_mbox_dev->dev, "cannot add Alloc ID index to storage: err: %i\n",
+			dev_err(pon_mbox_dev->dev,
+				"cannot add Alloc ID index to storage: err: %i\n",
 				err);
 			goto cnt_err;
 		}
 
-		counters = pon_mbox_cnt_alloc_id_table_get(port_idx,
-						pon_mbox_dev->cnt_state);
-		if (counters == NULL) {
-			dev_err(pon_mbox_dev->dev, "cannot get counters table from storage\n");
+		counters = pon_mbox_cnt_alloc_id_table_get(
+			port_idx, pon_mbox_dev->cnt_state);
+		if (!counters) {
+			dev_err(pon_mbox_dev->dev,
+				"cannot get counters table from storage\n");
 			err = -ENOENT;
 			goto cnt_err;
 		}
 	}
 
-	err = pon_mbox_cnt_alloc_id_table_add(port_idx,
-					      &fw_counters,
+	err = pon_mbox_cnt_alloc_id_table_add(port_idx, &fw_counters,
 					      pon_mbox_dev->cnt_state);
 	if (err) {
-		dev_err(pon_mbox_dev->dev, "cannot add counters to storage: err: %i\n",
-			err);
+		dev_err(pon_mbox_dev->dev,
+			"cannot add counters to storage: err: %i\n", err);
 		goto cnt_err;
 	}
 
@@ -434,8 +436,7 @@ static void pon_mbox_cnt_alloc_last_update_update(u8 port_idx,
 
 static enum cnt_init_status
 gtc_counters_init(struct ponfw_cnt_io_grp *cnt_io_grp, u8 twdm_dswlch_id,
-		  u8 port_idx,
-		  struct pon_mbox *pon_mbox_dev)
+		  u8 port_idx, struct pon_mbox *pon_mbox_dev)
 {
 	(void)port_idx;
 	(void)cnt_io_grp;
@@ -455,7 +456,7 @@ static int gtc_counters_update(union pon_cnt *cnt, u8 port_idx,
 	struct ponfw_gtc_enhanced_counters *gtc_enh_fw_output =
 		&cnt_io_grp->aux.out.gtc_enh;
 	struct pon_mbox_gtc_counters *counters;
-	struct pon_mbox_gtc_counters fw_counters = {0};
+	struct pon_mbox_gtc_counters fw_counters = { 0 };
 
 	(void)port_idx;
 	(void)pon_mbox_cnt_gtc_fw2pon(gtc_fw_output, &fw_counters);
@@ -467,8 +468,7 @@ static int gtc_counters_update(union pon_cnt *cnt, u8 port_idx,
 	counters = pon_mbox_cnt_gtc_table_get(PON_MBOX_D_DSWLCH_ID_CURR,
 					      pon_mbox_dev->cnt_state);
 
-	(void)pon_mbox_cnt_gtc_table_add(&fw_counters,
-					 pon_mbox_dev->cnt_state);
+	(void)pon_mbox_cnt_gtc_table_add(&fw_counters, pon_mbox_dev->cnt_state);
 
 	if (counters_copy)
 		memcpy(counters_copy, counters, sizeof(*counters_copy));
@@ -490,8 +490,7 @@ static void pon_mbox_cnt_gtc_last_update_update(u8 port_idx,
 
 static enum cnt_init_status
 xgtc_counters_init(struct ponfw_cnt_io_grp *cnt_io_grp, u8 twdm_dswlch_id,
-		   u8 port_idx,
-		   struct pon_mbox *pon_mbox_dev)
+		   u8 port_idx, struct pon_mbox *pon_mbox_dev)
 {
 	(void)port_idx;
 	(void)cnt_io_grp;
@@ -513,7 +512,7 @@ static int xgtc_counters_update(union pon_cnt *cnt, u8 port_idx,
 	struct pon_mbox_xgtc_counters *counters_copy = &cnt->xgtc;
 	struct ponfw_xgtc_counters *fw_output = &cnt_io_grp->prime.out.xgtc;
 	struct pon_mbox_xgtc_counters *counters;
-	struct pon_mbox_xgtc_counters fw_counters = {0};
+	struct pon_mbox_xgtc_counters fw_counters = { 0 };
 
 	(void)port_idx;
 	(void)pon_mbox_cnt_xgtc_fw2pon(fw_output, &fw_counters);
@@ -546,8 +545,7 @@ static void pon_mbox_cnt_xgtc_last_update_update(u8 port_idx,
 
 static enum cnt_init_status
 alloc_lost_counters_init(struct ponfw_cnt_io_grp *cnt_io_grp, u8 twdm_dswlch_id,
-			 u8 port_idx,
-			 struct pon_mbox *pon_mbox_dev)
+			 u8 port_idx, struct pon_mbox *pon_mbox_dev)
 {
 	(void)port_idx;
 	(void)cnt_io_grp;
@@ -582,7 +580,7 @@ static int alloc_lost_counters_update(union pon_cnt *cnt, u8 port_idx,
 	struct ponfw_alloc_lost_counters *fw_output =
 		&cnt_io_grp->prime.out.alloc_lost;
 	struct pon_alloc_discard_counters *counters;
-	struct pon_alloc_discard_counters fw_counters = {0};
+	struct pon_alloc_discard_counters fw_counters = { 0 };
 
 	(void)port_idx;
 	(void)pon_mbox_cnt_alloc_lost_fw2pon(fw_output, &fw_counters);
@@ -603,8 +601,9 @@ static int alloc_lost_counters_update(union pon_cnt *cnt, u8 port_idx,
 	return 0;
 }
 
-static void pon_mbox_cnt_alloc_lost_last_update_update(u8 port_idx,
-						   struct counters_state *state)
+static void
+pon_mbox_cnt_alloc_lost_last_update_update(u8 port_idx,
+					   struct counters_state *state)
 {
 	(void)port_idx;
 	mutex_lock(&state->lock);
@@ -614,8 +613,7 @@ static void pon_mbox_cnt_alloc_lost_last_update_update(u8 port_idx,
 
 static enum cnt_init_status
 rx_eth_counters_init(struct ponfw_cnt_io_grp *cnt_io_grp, u8 twdm_dswlch_id,
-		     u8 port_idx,
-		     struct pon_mbox *pon_mbox_dev)
+		     u8 port_idx, struct pon_mbox *pon_mbox_dev)
 {
 	if (is_ngpon2_mode(pon_mbox_dev))
 		if (!need_ngpon2_update(pon_mbox_dev, twdm_dswlch_id))
@@ -633,7 +631,7 @@ static int rx_eth_counters_update(union pon_cnt *cnt, u8 port_idx,
 	struct pon_eth_counters *counters_copy = &cnt->rx_eth;
 	struct ponfw_rx_eth_counters *fw_output = &cnt_io_grp->prime.out.rx_eth;
 	struct pon_eth_counters *counters;
-	struct pon_eth_counters fw_counters = {0};
+	struct pon_eth_counters fw_counters = { 0 };
 	int err;
 
 	(void)pon_mbox_cnt_rx_eth_fw2pon(fw_output, &fw_counters);
@@ -648,30 +646,31 @@ static int rx_eth_counters_update(union pon_cnt *cnt, u8 port_idx,
 	 * storage. It is called when we want to get counters for GEM port which
 	 * is not in storage only for the first time.
 	 */
-	if (counters == NULL) {
+	if (!counters) {
 		err = pon_mbox_cnt_gem_port_add(port_idx,
 						pon_mbox_dev->cnt_state);
 		if (err < 0) {
-			dev_err(pon_mbox_dev->dev, "cannot add GEM port index to storage: err: %i\n",
+			dev_err(pon_mbox_dev->dev,
+				"cannot add GEM port index to storage: err: %i\n",
 				err);
 			goto cnt_err;
 		}
 
-		counters = pon_mbox_cnt_rx_eth_table_get(port_idx,
-						pon_mbox_dev->cnt_state);
-		if (counters == NULL) {
-			dev_err(pon_mbox_dev->dev, "cannot get counters table from storage\n");
+		counters = pon_mbox_cnt_rx_eth_table_get(
+			port_idx, pon_mbox_dev->cnt_state);
+		if (!counters) {
+			dev_err(pon_mbox_dev->dev,
+				"cannot get counters table from storage\n");
 			err = -ENOENT;
 			goto cnt_err;
 		}
 	}
 
-	err = pon_mbox_cnt_rx_eth_table_add(port_idx,
-					    &fw_counters,
+	err = pon_mbox_cnt_rx_eth_table_add(port_idx, &fw_counters,
 					    pon_mbox_dev->cnt_state);
 	if (err) {
-		dev_err(pon_mbox_dev->dev, "cannot add counters to storage: err: %i\n",
-			err);
+		dev_err(pon_mbox_dev->dev,
+			"cannot add counters to storage: err: %i\n", err);
 		goto cnt_err;
 	}
 
@@ -695,8 +694,7 @@ static void pon_mbox_cnt_eth_rx_last_update_update(u8 port_idx,
 
 static enum cnt_init_status
 tx_eth_counters_init(struct ponfw_cnt_io_grp *cnt_io_grp, u8 twdm_dswlch_id,
-		     u8 port_idx,
-		     struct pon_mbox *pon_mbox_dev)
+		     u8 port_idx, struct pon_mbox *pon_mbox_dev)
 {
 	if (is_ngpon2_mode(pon_mbox_dev))
 		if (!need_ngpon2_update(pon_mbox_dev, twdm_dswlch_id))
@@ -714,7 +712,7 @@ static int tx_eth_counters_update(union pon_cnt *cnt, u8 port_idx,
 	struct pon_eth_counters *counters_copy = &cnt->tx_eth;
 	struct ponfw_tx_eth_counters *fw_output = &cnt_io_grp->prime.out.tx_eth;
 	struct pon_eth_counters *counters;
-	struct pon_eth_counters fw_counters = {0};
+	struct pon_eth_counters fw_counters = { 0 };
 	int err;
 
 	(void)pon_mbox_cnt_tx_eth_fw2pon(fw_output, &fw_counters);
@@ -729,30 +727,31 @@ static int tx_eth_counters_update(union pon_cnt *cnt, u8 port_idx,
 	 * storage. It is called when we want to get counters for GEM port which
 	 * is not in storage only for the first time.
 	 */
-	if (counters == NULL) {
+	if (!counters) {
 		err = pon_mbox_cnt_gem_port_add(port_idx,
 						pon_mbox_dev->cnt_state);
 		if (err < 0) {
-			dev_err(pon_mbox_dev->dev, "cannot add GEM port index to storage: err: %i\n",
+			dev_err(pon_mbox_dev->dev,
+				"cannot add GEM port index to storage: err: %i\n",
 				err);
 			goto cnt_err;
 		}
 
-		counters = pon_mbox_cnt_tx_eth_table_get(port_idx,
-						pon_mbox_dev->cnt_state);
-		if (counters == NULL) {
-			dev_err(pon_mbox_dev->dev, "cannot get counters table from storage\n");
+		counters = pon_mbox_cnt_tx_eth_table_get(
+			port_idx, pon_mbox_dev->cnt_state);
+		if (!counters) {
+			dev_err(pon_mbox_dev->dev,
+				"cannot get counters table from storage\n");
 			err = -ENOENT;
 			goto cnt_err;
 		}
 	}
 
-	err = pon_mbox_cnt_tx_eth_table_add(port_idx,
-					    &fw_counters,
+	err = pon_mbox_cnt_tx_eth_table_add(port_idx, &fw_counters,
 					    pon_mbox_dev->cnt_state);
 	if (err) {
-		dev_err(pon_mbox_dev->dev, "cannot add counters to storage: err: %i\n",
-			err);
+		dev_err(pon_mbox_dev->dev,
+			"cannot add counters to storage: err: %i\n", err);
 		goto cnt_err;
 	}
 
@@ -766,9 +765,8 @@ cnt_err:
 	return err;
 }
 
-static void
-pon_mbox_cnt_eth_tx_last_update_update(u8 port_idx,
-				       struct counters_state *state)
+static void pon_mbox_cnt_eth_tx_last_update_update(u8 port_idx,
+						   struct counters_state *state)
 {
 	mutex_lock(&state->lock);
 	state->last_update.eth_tx_counters[port_idx] = jiffies;
@@ -777,8 +775,7 @@ pon_mbox_cnt_eth_tx_last_update_update(u8 port_idx,
 
 static enum cnt_init_status
 pon_lods_counters_init(struct ponfw_cnt_io_grp *cnt_io_grp, u8 twdm_dswlch_id,
-			u8 port_idx,
-			struct pon_mbox *pon_mbox_dev)
+		       u8 port_idx, struct pon_mbox *pon_mbox_dev)
 {
 	(void)port_idx;
 	(void)cnt_io_grp;
@@ -799,9 +796,9 @@ static int twdm_lods_counters_update(union pon_cnt *cnt, u8 port_idx,
 {
 	struct pon_mbox_twdm_lods_counters *counters_copy = &cnt->twdm_lods;
 	struct ponfw_twdm_lods_counters *fw_output =
-			&cnt_io_grp->prime.out.twdm_lods;
+		&cnt_io_grp->prime.out.twdm_lods;
 	struct pon_mbox_twdm_lods_counters *counters;
-	struct pon_mbox_twdm_lods_counters fw_counters = {0};
+	struct pon_mbox_twdm_lods_counters fw_counters = { 0 };
 
 	(void)port_idx;
 	(void)pon_mbox_cnt_twdm_lods_fw2pon(fw_output, &fw_counters);
@@ -855,19 +852,19 @@ static int twdm_optic_pl_counters_update(union pon_cnt *cnt, u8 port_idx,
 					 struct pon_mbox *pon_mbox_dev)
 {
 	struct pon_mbox_twdm_optic_pl_counters *counters_copy =
-			&cnt->twdm_optic_pl;
+		&cnt->twdm_optic_pl;
 	struct ponfw_twdm_onu_optic_pl_counters *fw_output =
-			&cnt_io_grp->prime.out.onu_optic_pl;
+		&cnt_io_grp->prime.out.onu_optic_pl;
 	struct pon_mbox_twdm_optic_pl_counters *counters;
-	struct pon_mbox_twdm_optic_pl_counters fw_counters = {0};
+	struct pon_mbox_twdm_optic_pl_counters fw_counters = { 0 };
 
 	(void)port_idx;
 	(void)pon_mbox_cnt_twdm_optic_pl_fw2pon(fw_output, &fw_counters);
 
 	pon_mbox_cnt_lock(pon_mbox_dev->cnt_state);
 
-	counters = pon_mbox_cnt_twdm_optic_pl_table_get
-			(PON_MBOX_D_DSWLCH_ID_CURR, pon_mbox_dev->cnt_state);
+	counters = pon_mbox_cnt_twdm_optic_pl_table_get(
+		PON_MBOX_D_DSWLCH_ID_CURR, pon_mbox_dev->cnt_state);
 
 	(void)pon_mbox_cnt_twdm_optic_pl_table_add(&fw_counters,
 						   pon_mbox_dev->cnt_state);
@@ -891,9 +888,8 @@ static void twdm_optic_pl_last_update_update(u8 port_idx,
 }
 
 static enum cnt_init_status
-twdm_tc_counters_init(struct ponfw_cnt_io_grp *cnt_io_grp,
-		      u8 twdm_dswlch_id, u8 port_idx,
-		      struct pon_mbox *pon_mbox_dev)
+twdm_tc_counters_init(struct ponfw_cnt_io_grp *cnt_io_grp, u8 twdm_dswlch_id,
+		      u8 port_idx, struct pon_mbox *pon_mbox_dev)
 {
 	(void)port_idx;
 	(void)cnt_io_grp;
@@ -911,12 +907,11 @@ static int twdm_tc_counters_update(union pon_cnt *cnt, u8 port_idx,
 				   struct ponfw_cnt_io_grp *cnt_io_grp,
 				   struct pon_mbox *pon_mbox_dev)
 {
-	struct pon_mbox_twdm_tc_counters *counters_copy =
-			&cnt->twdm_tc;
+	struct pon_mbox_twdm_tc_counters *counters_copy = &cnt->twdm_tc;
 	struct ponfw_twdm_tc_counters *fw_output =
-			&cnt_io_grp->prime.out.twdm_tc;
+		&cnt_io_grp->prime.out.twdm_tc;
 	struct pon_mbox_twdm_tc_counters *counters;
-	struct pon_mbox_twdm_tc_counters fw_counters = {0};
+	struct pon_mbox_twdm_tc_counters fw_counters = { 0 };
 
 	(void)port_idx;
 	(void)pon_mbox_cnt_twdm_tc_fw2pon(fw_output, &fw_counters);
@@ -975,19 +970,19 @@ static int xgtc_ploam_ds_counters_update(union pon_cnt *cnt, u8 port_idx,
 					 struct pon_mbox *pon_mbox_dev)
 {
 	struct pon_mbox_xgtc_ploam_ds_counters *counters_copy =
-			&cnt->xgtc_ploam_ds;
+		&cnt->xgtc_ploam_ds;
 	struct ponfw_xgtc_ploam_ds_counters *fw_output =
-			&cnt_io_grp->prime.out.xgtc_ploam_ds;
+		&cnt_io_grp->prime.out.xgtc_ploam_ds;
 	struct pon_mbox_xgtc_ploam_ds_counters *counters;
-	struct pon_mbox_xgtc_ploam_ds_counters fw_counters = {0};
+	struct pon_mbox_xgtc_ploam_ds_counters fw_counters = { 0 };
 
 	(void)port_idx;
 	(void)pon_mbox_cnt_xgtc_ploam_ds_fw2pon(fw_output, &fw_counters);
 
 	pon_mbox_cnt_lock(pon_mbox_dev->cnt_state);
 
-	counters = pon_mbox_cnt_xgtc_ploam_ds_table_get
-			(PON_MBOX_D_DSWLCH_ID_CURR, pon_mbox_dev->cnt_state);
+	counters = pon_mbox_cnt_xgtc_ploam_ds_table_get(
+		PON_MBOX_D_DSWLCH_ID_CURR, pon_mbox_dev->cnt_state);
 
 	(void)pon_mbox_cnt_xgtc_ploam_ds_table_add(&fw_counters,
 						   pon_mbox_dev->cnt_state);
@@ -1012,8 +1007,8 @@ static void xgtc_ploam_ds_last_update_update(u8 port_idx,
 
 static enum cnt_init_status
 gtc_ploam_ds_counters_init(struct ponfw_cnt_io_grp *cnt_io_grp,
-			    u8 twdm_dswlch_id, u8 port_idx,
-			    struct pon_mbox *pon_mbox_dev)
+			   u8 twdm_dswlch_id, u8 port_idx,
+			   struct pon_mbox *pon_mbox_dev)
 {
 	(void)port_idx;
 	(void)cnt_io_grp;
@@ -1030,11 +1025,11 @@ static int gtc_ploam_ds_counters_update(union pon_cnt *cnt, u8 port_idx,
 					struct pon_mbox *pon_mbox_dev)
 {
 	struct pon_mbox_gtc_ploam_ds_counters *counters_copy =
-			&cnt->gtc_ploam_ds;
+		&cnt->gtc_ploam_ds;
 	struct ponfw_gtc_ploam_ds_counters *fw_output =
-			&cnt_io_grp->prime.out.gtc_ploam_ds;
+		&cnt_io_grp->prime.out.gtc_ploam_ds;
 	struct pon_mbox_gtc_ploam_ds_counters *counters;
-	struct pon_mbox_gtc_ploam_ds_counters fw_counters = {0};
+	struct pon_mbox_gtc_ploam_ds_counters fw_counters = { 0 };
 
 	(void)port_idx;
 	(void)pon_mbox_cnt_gtc_ploam_ds_fw2pon(fw_output, &fw_counters);
@@ -1044,7 +1039,7 @@ static int gtc_ploam_ds_counters_update(union pon_cnt *cnt, u8 port_idx,
 	counters = pon_mbox_cnt_gtc_ploam_ds_table_get(pon_mbox_dev->cnt_state);
 
 	(void)pon_mbox_cnt_gtc_ploam_ds_table_add(&fw_counters,
-				pon_mbox_dev->cnt_state);
+						  pon_mbox_dev->cnt_state);
 
 	if (counters_copy)
 		memcpy(counters_copy, counters, sizeof(*counters_copy));
@@ -1092,19 +1087,19 @@ static int xgtc_ploam_us_counters_update(union pon_cnt *cnt, u8 port_idx,
 					 struct pon_mbox *pon_mbox_dev)
 {
 	struct pon_mbox_xgtc_ploam_us_counters *counters_copy =
-			&cnt->xgtc_ploam_us;
+		&cnt->xgtc_ploam_us;
 	struct ponfw_xgtc_ploam_us_counters *fw_output =
-			&cnt_io_grp->prime.out.xgtc_ploam_us;
+		&cnt_io_grp->prime.out.xgtc_ploam_us;
 	struct pon_mbox_xgtc_ploam_us_counters *counters;
-	struct pon_mbox_xgtc_ploam_us_counters fw_counters = {0};
+	struct pon_mbox_xgtc_ploam_us_counters fw_counters = { 0 };
 
 	(void)port_idx;
 	(void)pon_mbox_cnt_xgtc_ploam_us_fw2pon(fw_output, &fw_counters);
 
 	pon_mbox_cnt_lock(pon_mbox_dev->cnt_state);
 
-	counters = pon_mbox_cnt_xgtc_ploam_us_table_get
-			(PON_MBOX_D_DSWLCH_ID_CURR, pon_mbox_dev->cnt_state);
+	counters = pon_mbox_cnt_xgtc_ploam_us_table_get(
+		PON_MBOX_D_DSWLCH_ID_CURR, pon_mbox_dev->cnt_state);
 
 	(void)pon_mbox_cnt_xgtc_ploam_us_table_add(&fw_counters,
 						   pon_mbox_dev->cnt_state);
@@ -1129,8 +1124,8 @@ static void xgtc_ploam_us_last_update_update(u8 port_idx,
 
 static enum cnt_init_status
 gtc_ploam_us_counters_init(struct ponfw_cnt_io_grp *cnt_io_grp,
-			    u8 twdm_dswlch_id, u8 port_idx,
-			    struct pon_mbox *pon_mbox_dev)
+			   u8 twdm_dswlch_id, u8 port_idx,
+			   struct pon_mbox *pon_mbox_dev)
 {
 	(void)port_idx;
 	(void)cnt_io_grp;
@@ -1147,11 +1142,11 @@ static int gtc_ploam_us_counters_update(union pon_cnt *cnt, u8 port_idx,
 					struct pon_mbox *pon_mbox_dev)
 {
 	struct pon_mbox_gtc_ploam_us_counters *counters_copy =
-			&cnt->gtc_ploam_us;
+		&cnt->gtc_ploam_us;
 	struct ponfw_gtc_ploam_us_counters *fw_output =
-			&cnt_io_grp->prime.out.gtc_ploam_us;
+		&cnt_io_grp->prime.out.gtc_ploam_us;
 	struct pon_mbox_gtc_ploam_us_counters *counters;
-	struct pon_mbox_gtc_ploam_us_counters fw_counters = {0};
+	struct pon_mbox_gtc_ploam_us_counters fw_counters = { 0 };
 
 	(void)port_idx;
 	(void)pon_mbox_cnt_gtc_ploam_us_fw2pon(fw_output, &fw_counters);
@@ -1322,10 +1317,8 @@ static const struct cnt_ctrl cnt_ctrl_array[MAX_CTRL_CNT] = {
  * @return 0 for success
  *	   PONFW_NACK, PONFW_NACK_DUP, -ENOENT or -EINVAL for failure
  */
-static int generic_counters_update(enum counter_type cnt_index,
-				   u8 dswlch_id,
-				   u8 port_idx,
-				   union pon_cnt *cnt,
+static int generic_counters_update(enum counter_type cnt_index, u8 dswlch_id,
+				   u8 port_idx, union pon_cnt *cnt,
 				   struct pon_mbox *pon_mbox_dev)
 {
 	/* The array of auxiliary counter-specific parameters
@@ -1347,7 +1340,7 @@ static int generic_counters_update(enum counter_type cnt_index,
 	/* Data of two identical type fields (prime, aux), each consists of
 	 * in,out, to be passed to primary and auxiliary pon_mbox_send()
 	 */
-	struct ponfw_cnt_io_grp cnt_io_grp = {0};
+	struct ponfw_cnt_io_grp cnt_io_grp = { 0 };
 	/* Pointer to the primary table element where counter-specific
 	 * parameters are stored for primary pon_mbox_send() call
 	 */
@@ -1358,31 +1351,33 @@ static int generic_counters_update(enum counter_type cnt_index,
 	 */
 	const struct cnt_ctrl_aux *cnt_ctrl_aux =
 		(cnt_ctrl->ctrl_aux_idx > NONE_CNT) ?
-		(cnt_ctrl_aux_array + cnt_ctrl->ctrl_aux_idx) : NULL;
+			(cnt_ctrl_aux_array + cnt_ctrl->ctrl_aux_idx) :
+			NULL;
 	int err;
 	/* A request for the current DS Wavelength and also for the total
 	 * counters needs a counter update from the PON FW.
 	 */
 	u8 twdm_dswlch_id = ((dswlch_id == PON_MBOX_D_DSWLCH_ID_CURR) ||
 			     (dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC)) ?
-			pon_mbox_dev->cnt_state->twdm_ds_idx : dswlch_id;
+				    pon_mbox_dev->cnt_state->twdm_ds_idx :
+				    dswlch_id;
 	if (twdm_dswlch_id >= TWDM_DS_MAX)
 		return -EINVAL;
 
 	/* Prepare cnt_io_grp.prime.in and check if the mode supports counter.
 	 * Counter-specific init function is defined in table element 'cnt_ctrl'
 	 */
-	if (cnt_ctrl->init_fp(&cnt_io_grp, twdm_dswlch_id,
-			      port_idx, pon_mbox_dev) == CNT_UPDATE_SKIP)
+	if (cnt_ctrl->init_fp(&cnt_io_grp, twdm_dswlch_id, port_idx,
+			      pon_mbox_dev) == CNT_UPDATE_SKIP)
 		return 0;
 
 	/* Get counter-specific primary cnt_io_grp.prime.out * from the firmware
 	 * on the base of cnt_io_grp.prime.in. Counter-specific pon_mbox_send()
 	 * parameters are defined in the table element pointed by 'cnt_ctrl'
 	 */
-	err = pon_mbox_send(cnt_ctrl->cmd, PONFW_READ,
-			    &cnt_io_grp.prime.in, cnt_ctrl->lenr,
-			    &cnt_io_grp.prime.out, cnt_ctrl->len);
+	err = pon_mbox_send(cnt_ctrl->cmd, PONFW_READ, &cnt_io_grp.prime.in,
+			    cnt_ctrl->lenr, &cnt_io_grp.prime.out,
+			    cnt_ctrl->len);
 	if (err < 0) {
 		cnt_ctrl->last_update_fp(port_idx, pon_mbox_dev->cnt_state);
 		return err;
@@ -1422,7 +1417,7 @@ static int generic_counters_update(enum counter_type cnt_index,
  * @return pointer to the requested counter table
  */
 typedef union pon_cnt *(twdm_counter_table_get)(u8 dswlch_id,
-				    struct counters_state *state);
+						struct counters_state *state);
 
 /* Create the corresponding counter table get function name */
 #define PON_MBOX_COUNTER_TABLE_GET_FCT(CNT_TYPE) \
@@ -1442,11 +1437,9 @@ typedef union pon_cnt *(twdm_counter_table_get)(u8 dswlch_id,
  * @param[in] table_get_fct Table get function to get the requested table.
  *
  */
-static void generic_twdm_counter_table_get(u8 dswlch_id,
-				    union pon_cnt *cnt,
-				    struct pon_mbox *pon_mbox_dev,
-				    unsigned long table_size,
-				    twdm_counter_table_get *table_get_fct)
+static void generic_twdm_counter_table_get(
+	u8 dswlch_id, union pon_cnt *cnt, struct pon_mbox *pon_mbox_dev,
+	unsigned long table_size, twdm_counter_table_get *table_get_fct)
 {
 	union pon_cnt *counters;
 
@@ -1463,15 +1456,15 @@ u64 pon_mbox_counters_enabled_get(struct pon_mbox *pon_mbox_dev)
 {
 	unsigned int i = 0;
 	const struct cnt_ctrl *cnt_ctrl;
-	struct ponfw_cnt_io_grp cnt_io_grp = {0,};
+	struct ponfw_cnt_io_grp cnt_io_grp = { 0 };
 	u64 mask = 0;
 	u8 twdm_dswlch_id = pon_mbox_dev->cnt_state->twdm_ds_idx;
 
 	for (i = 0; i < MAX_CTRL_CNT; ++i) {
 		cnt_ctrl = &cnt_ctrl_array[i];
 
-		if (cnt_ctrl->init_fp(&cnt_io_grp, twdm_dswlch_id,
-				0, pon_mbox_dev) == CNT_UPDATE_SKIP)
+		if (cnt_ctrl->init_fp(&cnt_io_grp, twdm_dswlch_id, 0,
+				      pon_mbox_dev) == CNT_UPDATE_SKIP)
 			continue;
 
 		mask |= BIT_ULL(i);
@@ -1487,8 +1480,7 @@ int pon_mbox_gem_port_counters_update(u8 dswlch_id, u8 gem_port_idx,
 	int err;
 	struct pon_mbox_gem_port_counters *counters;
 
-	err = generic_counters_update(GEM_PORT_CNT,
-				      dswlch_id, gem_port_idx,
+	err = generic_counters_update(GEM_PORT_CNT, dswlch_id, gem_port_idx,
 				      (union pon_cnt *)cnt, pon_mbox_dev);
 	if (err < 0)
 		return err;
@@ -1497,8 +1489,8 @@ int pon_mbox_gem_port_counters_update(u8 dswlch_id, u8 gem_port_idx,
 	    dswlch_id == PON_MBOX_D_DSWLCH_ID_CURR)
 		return err;
 
-	counters = pon_mbox_cnt_gem_port_table_get(dswlch_id,
-				gem_port_idx, pon_mbox_dev->cnt_state);
+	counters = pon_mbox_cnt_gem_port_table_get(dswlch_id, gem_port_idx,
+						   pon_mbox_dev->cnt_state);
 	if (!counters) {
 		dev_err(pon_mbox_dev->dev,
 			"cannot get counters table from storage\n");
@@ -1523,13 +1515,12 @@ void pon_mbox_gem_all_counters_update(u8 dswlch_id,
 		memcpy(cnt, counters, sizeof(*cnt));
 }
 
-int pon_mbox_alloc_counters_update(u8 alloc_idx,
-				   struct pon_alloc_counters *cnt,
+int pon_mbox_alloc_counters_update(u8 alloc_idx, struct pon_alloc_counters *cnt,
 				   struct pon_mbox *pon_mbox_dev)
 {
-	return generic_counters_update(ALLOC_CNT,
-				       PON_MBOX_D_DSWLCH_ID_CURR, alloc_idx,
-				       (union pon_cnt *)cnt, pon_mbox_dev);
+	return generic_counters_update(ALLOC_CNT, PON_MBOX_D_DSWLCH_ID_CURR,
+				       alloc_idx, (union pon_cnt *)cnt,
+				       pon_mbox_dev);
 }
 
 int pon_mbox_gtc_counters_update(u8 dswlch_id,
@@ -1544,8 +1535,8 @@ int pon_mbox_gtc_counters_update(u8 dswlch_id,
 		return err;
 
 	generic_twdm_counter_table_get(dswlch_id, (union pon_cnt *)cnt,
-			pon_mbox_dev, sizeof(*cnt),
-			PON_MBOX_COUNTER_TABLE_GET_FCT(gtc));
+				       pon_mbox_dev, sizeof(*cnt),
+				       PON_MBOX_COUNTER_TABLE_GET_FCT(gtc));
 
 	return err;
 }
@@ -1562,8 +1553,8 @@ int pon_mbox_xgtc_counters_update(u8 dswlch_id,
 		return err;
 
 	generic_twdm_counter_table_get(dswlch_id, (union pon_cnt *)cnt,
-			pon_mbox_dev, sizeof(*cnt),
-			PON_MBOX_COUNTER_TABLE_GET_FCT(xgtc));
+				       pon_mbox_dev, sizeof(*cnt),
+				       PON_MBOX_COUNTER_TABLE_GET_FCT(xgtc));
 
 	return err;
 }
@@ -1580,18 +1571,18 @@ int pon_mbox_rx_eth_counters_update(u8 gem_port_idx,
 				    struct pon_eth_counters *cnt,
 				    struct pon_mbox *pon_mbox_dev)
 {
-	return generic_counters_update(RX_ETH_CNT,
-				       PON_MBOX_D_DSWLCH_ID_CURR, gem_port_idx,
-				       (union pon_cnt *)cnt, pon_mbox_dev);
+	return generic_counters_update(RX_ETH_CNT, PON_MBOX_D_DSWLCH_ID_CURR,
+				       gem_port_idx, (union pon_cnt *)cnt,
+				       pon_mbox_dev);
 }
 
 int pon_mbox_tx_eth_counters_update(u8 gem_port_idx,
 				    struct pon_eth_counters *cnt,
 				    struct pon_mbox *pon_mbox_dev)
 {
-	return generic_counters_update(TX_ETH_CNT,
-				       PON_MBOX_D_DSWLCH_ID_CURR, gem_port_idx,
-				       (union pon_cnt *)cnt, pon_mbox_dev);
+	return generic_counters_update(TX_ETH_CNT, PON_MBOX_D_DSWLCH_ID_CURR,
+				       gem_port_idx, (union pon_cnt *)cnt,
+				       pon_mbox_dev);
 }
 
 int pon_mbox_twdm_lods_counters_update(u8 dswlch_id,
@@ -1605,16 +1596,16 @@ int pon_mbox_twdm_lods_counters_update(u8 dswlch_id,
 	if (err < 0)
 		return err;
 
-	generic_twdm_counter_table_get(dswlch_id, (union pon_cnt *)cnt,
-			pon_mbox_dev, sizeof(*cnt),
-			PON_MBOX_COUNTER_TABLE_GET_FCT(twdm_lods));
+	generic_twdm_counter_table_get(
+		dswlch_id, (union pon_cnt *)cnt, pon_mbox_dev, sizeof(*cnt),
+		PON_MBOX_COUNTER_TABLE_GET_FCT(twdm_lods));
 
 	return err;
 }
 
-int pon_mbox_twdm_optic_pl_counters_update(u8 dswlch_id,
-		struct pon_mbox_twdm_optic_pl_counters *cnt,
-		struct pon_mbox *pon_mbox_dev)
+int pon_mbox_twdm_optic_pl_counters_update(
+	u8 dswlch_id, struct pon_mbox_twdm_optic_pl_counters *cnt,
+	struct pon_mbox *pon_mbox_dev)
 {
 	int err;
 
@@ -1623,9 +1614,9 @@ int pon_mbox_twdm_optic_pl_counters_update(u8 dswlch_id,
 	if (err < 0)
 		return err;
 
-	generic_twdm_counter_table_get(dswlch_id, (union pon_cnt *)cnt,
-			pon_mbox_dev, sizeof(*cnt),
-			PON_MBOX_COUNTER_TABLE_GET_FCT(twdm_optic_pl));
+	generic_twdm_counter_table_get(
+		dswlch_id, (union pon_cnt *)cnt, pon_mbox_dev, sizeof(*cnt),
+		PON_MBOX_COUNTER_TABLE_GET_FCT(twdm_optic_pl));
 
 	return err;
 }
@@ -1642,31 +1633,31 @@ int pon_mbox_twdm_tc_counters_update(u8 dswlch_id,
 		return err;
 
 	generic_twdm_counter_table_get(dswlch_id, (union pon_cnt *)cnt,
-			pon_mbox_dev, sizeof(*cnt),
-			PON_MBOX_COUNTER_TABLE_GET_FCT(twdm_tc));
+				       pon_mbox_dev, sizeof(*cnt),
+				       PON_MBOX_COUNTER_TABLE_GET_FCT(twdm_tc));
 
 	return err;
 }
 
-int pon_mbox_gtc_ploam_ds_counters_update(u8 dswlch_id,
-		struct pon_mbox_gtc_ploam_ds_counters *cnt,
-		struct pon_mbox *pon_mbox_dev)
+int pon_mbox_gtc_ploam_ds_counters_update(
+	u8 dswlch_id, struct pon_mbox_gtc_ploam_ds_counters *cnt,
+	struct pon_mbox *pon_mbox_dev)
 {
 	return generic_counters_update(GTC_PLOAM_DS_CNT, dswlch_id, 0,
 				       (union pon_cnt *)cnt, pon_mbox_dev);
 }
 
-int pon_mbox_gtc_ploam_us_counters_update(u8 dswlch_id,
-		struct pon_mbox_gtc_ploam_us_counters *cnt,
-		struct pon_mbox *pon_mbox_dev)
+int pon_mbox_gtc_ploam_us_counters_update(
+	u8 dswlch_id, struct pon_mbox_gtc_ploam_us_counters *cnt,
+	struct pon_mbox *pon_mbox_dev)
 {
 	return generic_counters_update(GTC_PLOAM_US_CNT, dswlch_id, 0,
 				       (union pon_cnt *)cnt, pon_mbox_dev);
 }
 
-int pon_mbox_xgtc_ploam_ds_counters_update(u8 dswlch_id,
-		struct pon_mbox_xgtc_ploam_ds_counters *cnt,
-		struct pon_mbox *pon_mbox_dev)
+int pon_mbox_xgtc_ploam_ds_counters_update(
+	u8 dswlch_id, struct pon_mbox_xgtc_ploam_ds_counters *cnt,
+	struct pon_mbox *pon_mbox_dev)
 {
 	int err;
 
@@ -1675,16 +1666,16 @@ int pon_mbox_xgtc_ploam_ds_counters_update(u8 dswlch_id,
 	if (err < 0)
 		return err;
 
-	generic_twdm_counter_table_get(dswlch_id, (union pon_cnt *)cnt,
-			pon_mbox_dev, sizeof(*cnt),
-			PON_MBOX_COUNTER_TABLE_GET_FCT(xgtc_ploam_ds));
+	generic_twdm_counter_table_get(
+		dswlch_id, (union pon_cnt *)cnt, pon_mbox_dev, sizeof(*cnt),
+		PON_MBOX_COUNTER_TABLE_GET_FCT(xgtc_ploam_ds));
 
 	return err;
 }
 
-int pon_mbox_xgtc_ploam_us_counters_update(u8 dswlch_id,
-		struct pon_mbox_xgtc_ploam_us_counters *cnt,
-		struct pon_mbox *pon_mbox_dev)
+int pon_mbox_xgtc_ploam_us_counters_update(
+	u8 dswlch_id, struct pon_mbox_xgtc_ploam_us_counters *cnt,
+	struct pon_mbox *pon_mbox_dev)
 {
 	int err;
 
@@ -1693,9 +1684,9 @@ int pon_mbox_xgtc_ploam_us_counters_update(u8 dswlch_id,
 	if (err < 0)
 		return err;
 
-	generic_twdm_counter_table_get(dswlch_id, (union pon_cnt *)cnt,
-			pon_mbox_dev, sizeof(*cnt),
-			PON_MBOX_COUNTER_TABLE_GET_FCT(xgtc_ploam_us));
+	generic_twdm_counter_table_get(
+		dswlch_id, (union pon_cnt *)cnt, pon_mbox_dev, sizeof(*cnt),
+		PON_MBOX_COUNTER_TABLE_GET_FCT(xgtc_ploam_us));
 
 	return err;
 }

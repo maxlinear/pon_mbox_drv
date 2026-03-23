@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright (c) 2023 MaxLinear, Inc.
+ * Copyright (c) 2023 - 2025 MaxLinear, Inc.
  * Copyright (c) 2018 - 2019 Intel Corporation
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
@@ -946,6 +946,10 @@ TEST(Counters, alloc_id_counters_add)
 
 	uint64_t csum = 0;
 
+	// make sure the us_bw fields are set to the reset pattern
+	RESET_FOR_CSUM(fw_cnt2.us_bw_hi);
+	RESET_FOR_CSUM(fw_cnt2.us_bw_lo);
+
 	RESET_FOR_CSUM(*cnt);
 	csum = checksum(cnt, sizeof(*cnt));
 
@@ -973,18 +977,6 @@ TEST(Counters, alloc_id_counters_add)
 		);
 
 	RESET_FOR_CSUM(cnt->idle);
-	ASSERT_EQ(csum, checksum(cnt, sizeof(*cnt)));
-
-	SCOPED_TRACE("us_bw");
-	test_counter(cnt->us_bw,
-		     (__u64) 0xffffffffffffffff,
-		     adder,
-		     [&](__u64 val) {
-			HI32LO32(val, fw_cnt2.us_bw_hi, fw_cnt2.us_bw_lo);
-		     }
-		);
-
-	RESET_FOR_CSUM(cnt->us_bw);
 	ASSERT_EQ(csum, checksum(cnt, sizeof(*cnt)));
 
 	pon_mbox_cnt_unlock(stat);

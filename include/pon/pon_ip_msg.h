@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2020 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2020 - 2026 MaxLinear, Inc.
  * Copyright (c) 2017 - 2020 Intel Corporation
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
@@ -131,14 +131,23 @@ struct ponfw_generic_message {
 /** A message was sent by the HOST */
 #define PONFW_HOST	1
 
-/** Message applicability unknown */
-#define PONFW_PROP_HW_UNKNOWN	0
-/** Message applicable to all HW types */
-#define PONFW_PROP_HW_ALL	1
-/** Message applicable to PRX/URX */
-#define PONFW_PROP_HW_PRXURX	2
-/** Message applicable to TOPAZ */
-#define PONFW_PROP_HW_TOPAZ	3
+enum {
+	PLAT_T_PRX = 0,
+	PLAT_T_URX = 1,
+	PLAT_T_TPZ = 2,
+	PLAT_TYPES_COUNT
+};
+
+/** Message compatible to PRX */
+#define PONFW_PLAT_PRX	(1UL << (PLAT_T_PRX))
+/** Message compatible to URX */
+#define PONFW_PLAT_URX	(1UL << (PLAT_T_URX))
+/** Message compatible to TPZ */
+#define PONFW_PLAT_TPZ	(1UL << (PLAT_T_TPZ))
+/** Message compatible to PRX/URX */
+#define PONFW_PLAT_PRX_URX	(PONFW_PLAT_PRX | PONFW_PLAT_URX)
+/** Message compatible to all SoC types */
+#define PONFW_PLAT_ALL	(PONFW_PLAT_PRX | PONFW_PLAT_URX | PONFW_PLAT_TPZ)
 
 /** Firmware Version */
 #define PONFW_VERSION_CMD_ID (0x01)
@@ -155,6 +164,8 @@ struct ponfw_generic_message {
 #define PONFW_VERSION_HWVERSION_URX_B 9
 /* The PON IP is integrated into the URX800 C SoC. */
 #define PONFW_VERSION_HWVERSION_URX_C 10
+/* The PON IP is integrated into the TPZ SoC. */
+#define PONFW_VERSION_HWVERSION_TPZ 11
 /* Indicates this is a official released FW */
 #define PONFW_VERSION_TFW_REL 0
 /* Indicates this is a test FW */
@@ -162,7 +173,7 @@ struct ponfw_generic_message {
 /* Current major version number */
 #define PONFW_VERSION_MAJ_DEV 4
 /* Current minor version number */
-#define PONFW_VERSION_MIN_DEV 1
+#define PONFW_VERSION_MIN_DEV 2
 /* This FW supports the ITU G.989, G.987 and G.9087 standards. */
 #define PONFW_VERSION_STANDARD_XGSPON 0
 /* This FW version supports the ITU G.984 standard. */
@@ -202,12 +213,14 @@ struct ponfw_generic_message {
 /* This FW version is intended for the SoC of the URX800 step C device
  * family.
  */
-#define PONFW_VERSION_PLATFORM_SOC_URX_C 8
+#define PONFW_VERSION_PLATFORM_SOC_URX_C 9
+/* This FW version is intended for the SoC of the TOPAZ device family. */
+#define PONFW_VERSION_PLATFORM_SOC_TPZ 11
 /* No current patch available */
 #define PONFW_VERSION_PATCH_NO 0
 
-/* HW applicability of FW_VERSION */
-#define PONFW_VERSION_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of FW_VERSION */
+#define PONFW_VERSION_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_version {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -309,8 +322,8 @@ struct ponfw_version {
 /* Insecure debug mode is supported. */
 #define PONFW_CAPABILITIES_DBG_INSEC 1
 
-/* HW applicability of FW_CAPABILITIES */
-#define PONFW_CAPABILITIES_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of FW_CAPABILITIES */
+#define PONFW_CAPABILITIES_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_capabilities {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -461,6 +474,18 @@ struct ponfw_capabilities {
 #define PONFW_XGTC_ONU_CONFIG_COEX_OP_DIS 0
 /* Coexistence mode is enabled. */
 #define PONFW_XGTC_ONU_CONFIG_COEX_OP_EN 1
+/* Disable FSM. FSM does neither react on requests from FW nor fetch data
+ * autonomously.
+ */
+#define PONFW_XGTC_ONU_CONFIG_DESC_FSMMODEEN_DIS 0
+/* Enable Watermark Mode: FSM refills POBUF autonomously. */
+#define PONFW_XGTC_ONU_CONFIG_DESC_FSMMODEEN_ENWMK 1
+/* Enable Request Mode: FSM reacts only on requests coming from FW. */
+#define PONFW_XGTC_ONU_CONFIG_DESC_FSMMODEEN_ENREQ 2
+/* Enable Combo Mode: FSM refills POBUF autonomously based on watermarks and
+ * reacts on requests coming from FW.
+ */
+#define PONFW_XGTC_ONU_CONFIG_DESC_FSMMODEEN_ENCOMBO 3
 /* XGS-PON mode (G.9807) */
 #define PONFW_XGTC_ONU_CONFIG_MODE_9807 0
 /* XG-PON mode (G.987) */
@@ -470,8 +495,8 @@ struct ponfw_capabilities {
 /* NG-PON2 mode, 10 G upstream (G.989) */
 #define PONFW_XGTC_ONU_CONFIG_MODE_989_10G 4
 
-/* HW applicability of XGTC_ONU_CONFIG */
-#define PONFW_XGTC_ONU_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_ONU_CONFIG */
+#define PONFW_XGTC_ONU_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_onu_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -494,7 +519,9 @@ struct ponfw_xgtc_onu_config {
 	/* Coexistence Operation Enable */
 	uint32_t coex_op : 1;
 	/* Reserved */
-	uint32_t res1 : 6;
+	uint32_t res1 : 4;
+	/* DESC FSM Mode Selection (TOPAZ) */
+	uint32_t desc_fsmmodeen : 2;
 	/* Power Leveling Capability */
 	uint32_t plev_cap : 8;
 	/* ONU Operation Mode */
@@ -534,8 +561,10 @@ struct ponfw_xgtc_onu_config {
 	uint32_t mode : 8;
 	/* Power Leveling Capability */
 	uint32_t plev_cap : 8;
+	/* DESC FSM Mode Selection (TOPAZ) */
+	uint32_t desc_fsmmodeen : 2;
 	/* Reserved */
-	uint32_t res1 : 6;
+	uint32_t res1 : 4;
 	/* Coexistence Operation Enable */
 	uint32_t coex_op : 1;
 	/* Emergency stop state */
@@ -587,8 +616,8 @@ struct ponfw_xgtc_onu_config {
 /* TOD is in sync with OLT */
 #define PONFW_ONU_TOD_SYNC_TOD_QUALITY_OLT 0x1
 
-/* HW applicability of ONU_TOD_SYNC */
-#define PONFW_ONU_TOD_SYNC_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ONU_TOD_SYNC */
+#define PONFW_ONU_TOD_SYNC_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_onu_tod_sync {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -646,8 +675,8 @@ struct ponfw_onu_tod_sync {
 /* Select both edges */
 #define PONFW_ONU_TOD_CONFIG_CTES_BOTH 0x2
 
-/* HW applicability of ONU_TOD_CONFIG */
-#define PONFW_ONU_TOD_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ONU_TOD_CONFIG */
+#define PONFW_ONU_TOD_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_onu_tod_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -711,8 +740,8 @@ struct ponfw_onu_tod_config {
 #define PONFW_RAND_NUM_CMD_ID (0x06)
 #define PONFW_RAND_NUM_LEN 16
 
-/* HW applicability of RAND_NUM */
-#define PONFW_RAND_NUM_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of RAND_NUM */
+#define PONFW_RAND_NUM_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_rand_num {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -752,8 +781,8 @@ struct ponfw_rand_num {
 /* PLOAM/MPCP logging in DS and US is enabled. */
 #define PONFW_MONITOR_CONFIG_CTRL_LOG_EN 1
 
-/* HW applicability of MONITOR_CONFIG */
-#define PONFW_MONITOR_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of MONITOR_CONFIG */
+#define PONFW_MONITOR_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_monitor_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -797,8 +826,8 @@ struct ponfw_monitor_config {
 /* Upstream PLOAM */
 #define PONFW_XGTC_PLOAM_LOG_DIR_US 0x1
 
-/* HW applicability of XGTC_PLOAM_LOG */
-#define PONFW_XGTC_PLOAM_LOG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_PLOAM_LOG */
+#define PONFW_XGTC_PLOAM_LOG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_ploam_log {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -838,8 +867,8 @@ struct ponfw_xgtc_ploam_log {
 /* Upstream PLOAM */
 #define PONFW_GTC_PLOAM_LOG_DIR_US 0x1
 
-/* HW applicability of GTC_PLOAM_LOG */
-#define PONFW_GTC_PLOAM_LOG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GTC_PLOAM_LOG */
+#define PONFW_GTC_PLOAM_LOG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_gtc_ploam_log {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -935,8 +964,8 @@ struct ponfw_gtc_ploam_log {
  */
 #define PONFW_ONU_OPTIC_CONFIG_ENV_SEL_EN 1
 
-/* HW applicability of ONU_OPTIC_CONFIG */
-#define PONFW_ONU_OPTIC_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ONU_OPTIC_CONFIG */
+#define PONFW_ONU_OPTIC_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_onu_optic_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1086,8 +1115,8 @@ struct ponfw_onu_optic_config {
 /* Reboot only if no emergency call is in progress */
 #define PONFW_XGTC_ONU_REBOOT_REQ_FLAGS_NO_EMERGENCY 0x2
 
-/* HW applicability of XGTC_ONU_REBOOT_REQ */
-#define PONFW_XGTC_ONU_REBOOT_REQ_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_ONU_REBOOT_REQ */
+#define PONFW_XGTC_ONU_REBOOT_REQ_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_onu_reboot_req {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1125,8 +1154,8 @@ struct ponfw_xgtc_onu_reboot_req {
 /* Request the current level without changing it. */
 #define PONFW_TX_POWER_LEVEL_REQ_OPER_REQ 0x03
 
-/* HW applicability of TX_POWER_LEVEL_REQ */
-#define PONFW_TX_POWER_LEVEL_REQ_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TX_POWER_LEVEL_REQ */
+#define PONFW_TX_POWER_LEVEL_REQ_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_tx_power_level_req {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1150,7 +1179,6 @@ struct ponfw_tx_power_level_req {
 #define PONFW_ONU_TIME_CAPTURE_CMD_ID (PONFW_STD_ITUT | 0x0D)
 #define PONFW_ONU_TIME_CAPTURE_LENR 4
 #define PONFW_ONU_TIME_CAPTURE_LEN 16
-
 /* External triggered capture value */
 #define PONFW_ONU_TIME_CAPTURE_CAP_SRC_EXT 0x0
 /* Downstream tick triggered capture value */
@@ -1162,8 +1190,8 @@ struct ponfw_tx_power_level_req {
 /* TOD is in sync with OLT */
 #define PONFW_ONU_TIME_CAPTURE_TOD_QUALITY_OLT 0x1
 
-/* HW applicability of ONU_TIME_CAPTURE */
-#define PONFW_ONU_TIME_CAPTURE_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ONU_TIME_CAPTURE */
+#define PONFW_ONU_TIME_CAPTURE_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_onu_time_capture {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1211,8 +1239,8 @@ struct ponfw_onu_time_capture {
 #define PONFW_ONU_TIME_COMPARE_CMD_ID (PONFW_STD_ITUT | 0x0E)
 #define PONFW_ONU_TIME_COMPARE_LEN 8
 
-/* HW applicability of ONU_TIME_COMPARE */
-#define PONFW_ONU_TIME_COMPARE_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ONU_TIME_COMPARE */
+#define PONFW_ONU_TIME_COMPARE_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_onu_time_compare {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1243,6 +1271,22 @@ struct ponfw_onu_time_compare {
 /** GTC ONU Configuration */
 #define PONFW_GTC_ONU_CONFIG_CMD_ID (PONFW_STD_ITUT | 0x0F)
 #define PONFW_GTC_ONU_CONFIG_LEN 44
+/* G.Fin is disabled (default; Fix value in PRX/URX)). */
+#define PONFW_GTC_ONU_CONFIG_GFIN_DIS 0
+/* G.fin is enabled (effective in TOPAZ only) */
+#define PONFW_GTC_ONU_CONFIG_GFIN_EN 1
+/* Disable FSM. FSM does neither react on requests from FW nor fetch data
+ * autonomously.
+ */
+#define PONFW_GTC_ONU_CONFIG_DESC_FSMMODEEN_DIS 0
+/* Enable Watermark Mode: FSM refills POBUF autonomously. */
+#define PONFW_GTC_ONU_CONFIG_DESC_FSMMODEEN_ENWMK 1
+/* Enable Request Mode: FSM reacts only on requests coming from FW. */
+#define PONFW_GTC_ONU_CONFIG_DESC_FSMMODEEN_ENREQ 2
+/* Enable Combo Mode: FSM refills POBUF autonomously based on watermarks and
+ * reacts on requests coming from FW.
+ */
+#define PONFW_GTC_ONU_CONFIG_DESC_FSMMODEEN_ENCOMBO 3
 /* The FCS bytes are stripped from the Ethernet frames (default). */
 #define PONFW_GTC_ONU_CONFIG_DS_FCS_EN_STRIP 0
 /* The new FCS bytes are added to the Ethernet frames after the old FCS has
@@ -1258,8 +1302,8 @@ struct ponfw_onu_time_compare {
 /* Sending of Dying Gasp information is disabled. */
 #define PONFW_GTC_ONU_CONFIG_DG_DIS_DIS 1
 
-/* HW applicability of GTC_ONU_CONFIG */
-#define PONFW_GTC_ONU_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GTC_ONU_CONFIG */
+#define PONFW_GTC_ONU_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_gtc_onu_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1300,7 +1344,11 @@ struct ponfw_gtc_onu_config {
 	/* Reserved */
 	uint32_t res4 : 16;
 	/* Reserved */
-	uint32_t res5 : 12;
+	uint32_t res5 : 9;
+	/* G.Fin Mode Select */
+	uint32_t gfin : 1;
+	/* DESC FSM Mode Selection (TOPAZ) */
+	uint32_t desc_fsmmodeen : 2;
 	/* Downstream Ethernet FCS Mode */
 	uint32_t ds_fcs_en : 1;
 	/* Downstream Timestamp Disable */
@@ -1358,8 +1406,12 @@ struct ponfw_gtc_onu_config {
 	uint32_t ds_ts_dis : 1;
 	/* Downstream Ethernet FCS Mode */
 	uint32_t ds_fcs_en : 1;
+	/* DESC FSM Mode Selection (TOPAZ) */
+	uint32_t desc_fsmmodeen : 2;
+	/* G.Fin Mode Select */
+	uint32_t gfin : 1;
 	/* Reserved */
-	uint32_t res5 : 12;
+	uint32_t res5 : 9;
 	/* Reserved */
 	uint32_t res4 : 16;
 	/* Reserved */
@@ -1399,8 +1451,8 @@ struct ponfw_gtc_onu_config {
 /* The laser transmitter is switched on. */
 #define PONFW_AON_CONFIG_LASER_ON_ON 1
 
-/* HW applicability of AON_CONFIG */
-#define PONFW_AON_CONFIG_HW_PROP	PONFW_PROP_HW_PRXURX
+/* Platform compatibility of AON_CONFIG */
+#define PONFW_AON_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_PRX_URX
 
 struct ponfw_aon_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1448,8 +1500,8 @@ struct ponfw_aon_config {
 /* The requested downstream wavelength is supported. */
 #define PONFW_TWDM_DS_WL_CONFIG_DS_VALID_YES 1
 
-/* HW applicability of TWDM_DS_WL_CONFIG */
-#define PONFW_TWDM_DS_WL_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TWDM_DS_WL_CONFIG */
+#define PONFW_TWDM_DS_WL_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_twdm_ds_wl_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1489,8 +1541,8 @@ struct ponfw_twdm_ds_wl_config {
 /* The requested upstream wavelength is supported. */
 #define PONFW_TWDM_US_WL_CONFIG_US_VALID_YES 1
 
-/* HW applicability of TWDM_US_WL_CONFIG */
-#define PONFW_TWDM_US_WL_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TWDM_US_WL_CONFIG */
+#define PONFW_TWDM_US_WL_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_twdm_us_wl_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1526,8 +1578,8 @@ struct ponfw_twdm_us_wl_config {
 /* Increase the frequency (decrease the wavelength). */
 #define PONFW_TWDM_US_WL_TUNING_TDIR_UP 1
 
-/* HW applicability of TWDM_US_WL_TUNING */
-#define PONFW_TWDM_US_WL_TUNING_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TWDM_US_WL_TUNING */
+#define PONFW_TWDM_US_WL_TUNING_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_twdm_us_wl_tuning {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1559,8 +1611,8 @@ struct ponfw_twdm_us_wl_tuning {
 /* Disabled mode, receiver and transmitter are switched off. */
 #define PONFW_OPTIC_POWER_SAVE_CONFIG_OPSM_ALL_OFF 3
 
-/* HW applicability of OPTIC_POWER_SAVE_CONFIG */
-#define PONFW_OPTIC_POWER_SAVE_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of OPTIC_POWER_SAVE_CONFIG */
+#define PONFW_OPTIC_POWER_SAVE_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_optic_power_save_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1592,8 +1644,8 @@ struct ponfw_optic_power_save_config {
  */
 #define PONFW_LOCAL_WAKEUP_LWI_ON 1
 
-/* HW applicability of LOCAL_WAKEUP */
-#define PONFW_LOCAL_WAKEUP_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of LOCAL_WAKEUP */
+#define PONFW_LOCAL_WAKEUP_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_local_wakeup {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1617,8 +1669,8 @@ struct ponfw_local_wakeup {
 #define PONFW_TWDM_ONU_CAL_RECORD_CMD_ID (PONFW_STD_ITUT | 0x16)
 #define PONFW_TWDM_ONU_CAL_RECORD_LEN 8
 
-/* HW applicability of TWDM_ONU_CAL_RECORD */
-#define PONFW_TWDM_ONU_CAL_RECORD_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TWDM_ONU_CAL_RECORD */
+#define PONFW_TWDM_ONU_CAL_RECORD_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_twdm_onu_cal_record {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1650,8 +1702,8 @@ struct ponfw_twdm_onu_cal_record {
 /* Both type A and type B are supported. */
 #define PONFW_TWDM_OPTIC_CONFIG_LT_AB 0x3
 
-/* HW applicability of TWDM_OPTIC_CONFIG */
-#define PONFW_TWDM_OPTIC_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TWDM_OPTIC_CONFIG */
+#define PONFW_TWDM_OPTIC_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_twdm_optic_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1715,8 +1767,8 @@ struct ponfw_twdm_optic_config {
 /* The transmit clock is locked to the receive clock. */
 #define PONFW_LOOP_TIME_CONFIG_LTS_LOCK 1
 
-/* HW applicability of LOOP_TIME_CONFIG */
-#define PONFW_LOOP_TIME_CONFIG_HW_PROP	PONFW_PROP_HW_PRXURX
+/* Platform compatibility of LOOP_TIME_CONFIG */
+#define PONFW_LOOP_TIME_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_PRX_URX
 
 struct ponfw_loop_time_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1729,6 +1781,62 @@ struct ponfw_loop_time_config {
 	uint32_t lts : 1;
 	/* Reserved */
 	uint32_t res : 31;
+#endif
+} __PACKED__;
+
+/** Loop Timing Synchronization SW-to-FW */
+#define PONFW_LOOP_TIMING_SYNC_SW2FW_CMD_ID (0xA0)
+#define PONFW_LOOP_TIMING_SYNC_SW2FW_LEN 4
+/* Step 1 of the procedure completed by SW */
+#define PONFW_LOOP_TIMING_SYNC_SW2FW_STEPNO_STEP1 1
+/* Step 3 (waiting) reached by SW */
+#define PONFW_LOOP_TIMING_SYNC_SW2FW_STEPNO_STEP3 2
+/* Step 5 completed by SW */
+#define PONFW_LOOP_TIMING_SYNC_SW2FW_STEPNO_STEP5 3
+/* Step 7 completed by SW */
+#define PONFW_LOOP_TIMING_SYNC_SW2FW_STEPNO_STEP7 4
+
+/* Platform compatibility of LOOP_TIMING_SYNC_SW2FW */
+#define PONFW_LOOP_TIMING_SYNC_SW2FW_PLAT_COMPATIBILITY PONFW_PLAT_TPZ
+
+struct ponfw_loop_timing_sync_sw2fw {
+#if __BYTE_ORDER == __BIG_ENDIAN
+	/* Reserved */
+	uint32_t res : 29;
+	/* Loop Timing Init Step SW Number */
+	uint32_t stepno : 3;
+#else
+	/* Loop Timing Init Step SW Number */
+	uint32_t stepno : 3;
+	/* Reserved */
+	uint32_t res : 29;
+#endif
+} __PACKED__;
+
+/** Loop Timing Synchronization FW-to-SW */
+#define PONFW_LOOP_TIMING_SYNC_FW2SW_CMD_ID (0xA1)
+#define PONFW_LOOP_TIMING_SYNC_FW2SW_LEN 4
+/* Step 2 of the procedure completed by FW */
+#define PONFW_LOOP_TIMING_SYNC_FW2SW_STEPNO_STEP2 1
+/* Step 4 completed by FW */
+#define PONFW_LOOP_TIMING_SYNC_FW2SW_STEPNO_STEP4 2
+/* Step 6 completed by FW */
+#define PONFW_LOOP_TIMING_SYNC_FW2SW_STEPNO_STEP6 3
+
+/* Platform compatibility of LOOP_TIMING_SYNC_FW2SW */
+#define PONFW_LOOP_TIMING_SYNC_FW2SW_PLAT_COMPATIBILITY PONFW_PLAT_TPZ
+
+struct ponfw_loop_timing_sync_fw2sw {
+#if __BYTE_ORDER == __BIG_ENDIAN
+	/* Reserved */
+	uint32_t res : 29;
+	/* Loop Timing Init Step FW Number */
+	uint32_t stepno : 3;
+#else
+	/* Loop Timing Init Step FW Number */
+	uint32_t stepno : 3;
+	/* Reserved */
+	uint32_t res : 29;
 #endif
 } __PACKED__;
 
@@ -1748,8 +1856,8 @@ struct ponfw_loop_time_config {
 /* The PEE is inactive. */
 #define PONFW_PEE_CONFIG_PEE_ACT 1
 
-/* HW applicability of PEE_CONFIG */
-#define PONFW_PEE_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of PEE_CONFIG */
+#define PONFW_PEE_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_pee_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1781,8 +1889,8 @@ struct ponfw_pee_config {
 /* Enable alarm */
 #define PONFW_ALARM_CONTROL_CONFIG_AEN_EN 0x1
 
-/* HW applicability of ALARM_CONTROL_CONFIG */
-#define PONFW_ALARM_CONTROL_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ALARM_CONTROL_CONFIG */
+#define PONFW_ALARM_CONTROL_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_alarm_control_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1812,9 +1920,10 @@ struct ponfw_alarm_control_config {
 #define PONFW_HW_VERSION_VERSION_LGM_B0 4
 #define PONFW_HW_VERSION_VERSION_LGM_B1 5
 #define PONFW_HW_VERSION_VERSION_LGM_C0 6
+#define PONFW_HW_VERSION_VERSION_TPZ_U 7
 
-/* HW applicability of HW_VERSION */
-#define PONFW_HW_VERSION_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of HW_VERSION */
+#define PONFW_HW_VERSION_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_hw_version {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1838,8 +1947,8 @@ struct ponfw_hw_version {
 /* PLOAMd forwarding is enabled for all message types. */
 #define PONFW_PLOAM_FORWARD_CONFIG_EN_ALL 0xFFFF
 
-/* HW applicability of PLOAM_FORWARD_CONFIG */
-#define PONFW_PLOAM_FORWARD_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of PLOAM_FORWARD_CONFIG */
+#define PONFW_PLOAM_FORWARD_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_ploam_forward_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1879,8 +1988,8 @@ struct ponfw_ploam_forward_config {
 /* Synchronous Ethernet mode is enabled (to the mode selected by SYNCE_MODE) */
 #define PONFW_SYNCE_CONTROL_SYNCE_EN_EN 1
 
-/* HW applicability of SYNCE_CONTROL */
-#define PONFW_SYNCE_CONTROL_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of SYNCE_CONTROL */
+#define PONFW_SYNCE_CONTROL_PLAT_COMPATIBILITY PONFW_PLAT_PRX_URX
 
 struct ponfw_synce_control {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1930,8 +2039,8 @@ struct ponfw_synce_control {
 /* OPT_TX_DIS_SFP */
 #define PONFW_GPIO_CONFIG_GPIO21_MODE_DEFAULT 0x0
 
-/* HW applicability of GPIO_CONFIG */
-#define PONFW_GPIO_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GPIO_CONFIG */
+#define PONFW_GPIO_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_gpio_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1963,8 +2072,8 @@ struct ponfw_gpio_config {
 /* The automatic equalizer adaptation function is enabled. */
 #define PONFW_SERDES_CONFIG_RX_ADAPT_EN_EN 0x1
 
-/* HW applicability of SERDES_CONFIG */
-#define PONFW_SERDES_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of SERDES_CONFIG */
+#define PONFW_SERDES_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_serdes_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -1992,8 +2101,8 @@ struct ponfw_serdes_config {
 #define PONFW_GET_STATIC_ALARM_CMD_ID (0x20)
 #define PONFW_GET_STATIC_ALARM_LEN 128
 
-/* HW applicability of GET_STATIC_ALARM */
-#define PONFW_GET_STATIC_ALARM_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GET_STATIC_ALARM */
+#define PONFW_GET_STATIC_ALARM_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_get_static_alarm {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2013,8 +2122,8 @@ struct ponfw_get_static_alarm {
 /* Static alarm mode */
 #define PONFW_REPORT_ALARM_MODE_STATIC 1
 
-/* HW applicability of REPORT_ALARM */
-#define PONFW_REPORT_ALARM_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of REPORT_ALARM */
+#define PONFW_REPORT_ALARM_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_report_alarm {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2046,8 +2155,8 @@ struct ponfw_report_alarm {
 /* Static alarm mode */
 #define PONFW_CLEAR_ALARM_MODE_STATIC 1
 
-/* HW applicability of CLEAR_ALARM */
-#define PONFW_CLEAR_ALARM_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of CLEAR_ALARM */
+#define PONFW_CLEAR_ALARM_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_clear_alarm {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2193,8 +2302,8 @@ struct ponfw_clear_alarm {
 /* The operation mode is unknown. */
 #define PONFW_ONU_STATUS_PON_MODE_NONE 7
 
-/* HW applicability of ONU_STATUS */
-#define PONFW_ONU_STATUS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ONU_STATUS */
+#define PONFW_ONU_STATUS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_onu_status {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2306,22 +2415,20 @@ struct ponfw_onu_status {
 /* Timeout for LODS Protection Timer (TO3, NG-PON2 only) */
 #define PONFW_PLOAM_STATE_REASON_TO3 0x3
 /* Timeout for DS Tuning Timer (TO4, NG-PON2 only) */
-#define PONFW_PLOAM_STATE_REASON_TO4 4
+#define PONFW_PLOAM_STATE_REASON_TO4 0x4
 /* Timeout for (US Tuning Timer (TO5, NG-PON2 only) */
 #define PONFW_PLOAM_STATE_REASON_TO5 0x5
 /* Timeout for Lost ONU Timer (TO6, in O5, NG-PON2 only) */
 #define PONFW_PLOAM_STATE_REASON_TO6 0x6
 /* Timeout for Profile Dwell Timer (TPD, NG-PON2 only) */
 #define PONFW_PLOAM_STATE_REASON_TO_TPD 0x7
-/* Timeout CPL(Change Tx Power Level) */
-#define PONFW_PLOAM_STATE_REASON_TO_CPL 0x8
 /* Timeout for CPI Waiver Timer (TO_CPI, NG-PON2 only) */
 #define PONFW_PLOAM_STATE_REASON_TO_CPI 0x9
 /* Any other reason */
 #define PONFW_PLOAM_STATE_REASON_REASON_OTHER 0xFFFF
 
-/* HW applicability of PLOAM_STATE */
-#define PONFW_PLOAM_STATE_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of PLOAM_STATE */
+#define PONFW_PLOAM_STATE_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_ploam_state {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2363,8 +2470,8 @@ struct ponfw_ploam_state {
 /* The authentication has failed. */
 #define PONFW_XGTC_AUTH_STATUS_AUTHSTAT_FAIL 0x4
 
-/* HW applicability of XGTC_AUTH_STATUS */
-#define PONFW_XGTC_AUTH_STATUS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_AUTH_STATUS */
+#define PONFW_XGTC_AUTH_STATUS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_auth_status {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2384,7 +2491,6 @@ struct ponfw_xgtc_auth_status {
 #define PONFW_XGTC_MSK_HASH_CMD_ID (PONFW_STD_ITUT | 0x26)
 #define PONFW_XGTC_MSK_HASH_LENR 4
 #define PONFW_XGTC_MSK_HASH_LEN 20
-
 /* Hash type is of AES-CMAC 128 bit */
 #define PONFW_XGTC_MSK_HASH_TYPE_AES_CMAC128 0
 /* Hash type is of HMAC-SHA 256 bit. */
@@ -2392,8 +2498,8 @@ struct ponfw_xgtc_auth_status {
 /* Hash type is of HMAC-SHA 512 bit. */
 #define PONFW_XGTC_MSK_HASH_TYPE_HMAC_SHA_512 2
 
-/* HW applicability of XGTC_MSK_HASH */
-#define PONFW_XGTC_MSK_HASH_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_MSK_HASH */
+#define PONFW_XGTC_MSK_HASH_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_msk_hash {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2433,8 +2539,8 @@ struct ponfw_xgtc_msk_hash {
 /* The current valid OMCI IK is delivered */
 #define PONFW_XGTC_OMCI_IK_VALID_VALID 1
 
-/* HW applicability of XGTC_OMCI_IK */
-#define PONFW_XGTC_OMCI_IK_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_OMCI_IK */
+#define PONFW_XGTC_OMCI_IK_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_omci_ik {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2484,8 +2590,8 @@ struct ponfw_xgtc_omci_ik {
 /* Mode 2: Normal -6 dB */
 #define PONFW_US_OVERHEAD_STATUS_TX_POW_MODE_MODE2 0x2
 
-/* HW applicability of US_OVERHEAD_STATUS */
-#define PONFW_US_OVERHEAD_STATUS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of US_OVERHEAD_STATUS */
+#define PONFW_US_OVERHEAD_STATUS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_us_overhead_status {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2554,9 +2660,8 @@ struct ponfw_us_overhead_status {
 #define PONFW_ALLOC_BW_LENR 4
 #define PONFW_ALLOC_BW_LEN 12
 
-
-/* HW applicability of ALLOC_BW */
-#define PONFW_ALLOC_BW_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ALLOC_BW */
+#define PONFW_ALLOC_BW_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_alloc_bw {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2590,8 +2695,8 @@ struct ponfw_alloc_bw {
 /* Narrow band option */
 #define PONFW_TWDM_WL_STATUS_UWBO_NB 0x2
 
-/* HW applicability of TWDM_WL_STATUS */
-#define PONFW_TWDM_WL_STATUS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TWDM_WL_STATUS */
+#define PONFW_TWDM_WL_STATUS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_twdm_wl_status {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2639,7 +2744,6 @@ struct ponfw_twdm_wl_status {
 #define PONFW_BURST_PROFILE_STATUS_CMD_ID (PONFW_STD_ITUT | 0x2D)
 #define PONFW_BURST_PROFILE_STATUS_LENR 4
 #define PONFW_BURST_PROFILE_STATUS_LEN 32
-
 /* Wavelength selection is ignored.This shall be used for all
  * single-wavelength operation modes.
  */
@@ -2657,8 +2761,8 @@ struct ponfw_twdm_wl_status {
 /* Upstream FEC is enabled */
 #define PONFW_BURST_PROFILE_STATUS_FEC_ON 1
 
-/* HW applicability of BURST_PROFILE_STATUS */
-#define PONFW_BURST_PROFILE_STATUS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of BURST_PROFILE_STATUS */
+#define PONFW_BURST_PROFILE_STATUS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_burst_profile_status {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2810,8 +2914,8 @@ struct ponfw_burst_profile_status {
 #define PONFW_PSM_STATE_CMD_ID (PONFW_STD_ITUT | 0x2E)
 #define PONFW_PSM_STATE_LEN 12
 
-/* HW applicability of PSM_STATE */
-#define PONFW_PSM_STATE_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of PSM_STATE */
+#define PONFW_PSM_STATE_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_psm_state {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2835,7 +2939,6 @@ struct ponfw_psm_state {
 #define PONFW_TWDM_CHANNEL_PROFILE_CMD_ID (PONFW_STD_ITUT | 0x2F)
 #define PONFW_TWDM_CHANNEL_PROFILE_LENW 24
 #define PONFW_TWDM_CHANNEL_PROFILE_LENR 4
-
 /* The channel profile pertains to another TWDM channel. */
 #define PONFW_TWDM_CHANNEL_PROFILE_THIS_CH_OTHER 0
 /* The channel profile pertains to the TWDM channel in which it is
@@ -2875,8 +2978,8 @@ struct ponfw_psm_state {
 /* 2.48832 and 9.95328 Gbit/s are supported. */
 #define PONFW_TWDM_CHANNEL_PROFILE_US_RATE_BOTH 3
 
-/* HW applicability of TWDM_CHANNEL_PROFILE */
-#define PONFW_TWDM_CHANNEL_PROFILE_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TWDM_CHANNEL_PROFILE */
+#define PONFW_TWDM_CHANNEL_PROFILE_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_twdm_channel_profile {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -2985,8 +3088,8 @@ struct ponfw_twdm_channel_profile {
 /* Synchronous Ethernet mode is in hold-over mode. */
 #define PONFW_SYNCE_STATUS_SYNCE_STAT_HOLD 3
 
-/* HW applicability of SYNCE_STATUS */
-#define PONFW_SYNCE_STATUS_HW_PROP	PONFW_PROP_HW_PRXURX
+/* Platform compatibility of SYNCE_STATUS */
+#define PONFW_SYNCE_STATUS_PLAT_COMPATIBILITY PONFW_PLAT_PRX_URX
 
 struct ponfw_synce_status {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3010,8 +3113,8 @@ struct ponfw_synce_status {
 #define PONFW_PSM_STATUS_CMD_ID (PONFW_STD_ITUT | 0x32)
 #define PONFW_PSM_STATUS_LEN 44
 
-/* HW applicability of PSM_STATUS */
-#define PONFW_PSM_STATUS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of PSM_STATUS */
+#define PONFW_PSM_STATUS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_psm_status {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3067,14 +3170,13 @@ struct ponfw_psm_status {
 #define PONFW_LOG_INFO_CMD_ID (0x34)
 #define PONFW_LOG_INFO_LENW 20
 #define PONFW_LOG_INFO_LEN 4
-
 /* Disable */
 #define PONFW_LOG_INFO_LOGSEL0_DIS 0
 /* Enable */
 #define PONFW_LOG_INFO_LOGSEL0_EN 1
 
-/* HW applicability of LOG_INFO */
-#define PONFW_LOG_INFO_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of LOG_INFO */
+#define PONFW_LOG_INFO_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_log_info {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3114,8 +3216,8 @@ struct ponfw_log_info {
 #define PONFW_BIP_ERR_CONFIG_CMD_ID (PONFW_STD_ITUT | 0x40)
 #define PONFW_BIP_ERR_CONFIG_LEN 12
 
-/* HW applicability of BIP_ERR_CONFIG */
-#define PONFW_BIP_ERR_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of BIP_ERR_CONFIG */
+#define PONFW_BIP_ERR_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_bip_err_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3199,8 +3301,8 @@ struct ponfw_bip_err_config {
 /* Automatic message sending is enabled. */
 #define PONFW_SYNCE_CONFIG_SEND_INFO_EN 1
 
-/* HW applicability of SYNCE_CONFIG */
-#define PONFW_SYNCE_CONFIG_HW_PROP	PONFW_PROP_HW_PRXURX
+/* Platform compatibility of SYNCE_CONFIG */
+#define PONFW_SYNCE_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_PRX_URX
 
 struct ponfw_synce_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3302,8 +3404,8 @@ struct ponfw_synce_config {
  */
 #define PONFW_PSM_CONFIG_EN_EN 0x1
 
-/* HW applicability of PSM_CONFIG */
-#define PONFW_PSM_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of PSM_CONFIG */
+#define PONFW_PSM_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_psm_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3353,8 +3455,8 @@ struct ponfw_psm_config {
 /* Optional mode, for future enhancement, not supported. */
 #define PONFW_XGTC_ENC_CONFIG_ENCMODE_HMAC_SHA_512 0x3
 
-/* HW applicability of XGTC_ENC_CONFIG */
-#define PONFW_XGTC_ENC_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_ENC_CONFIG */
+#define PONFW_XGTC_ENC_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_enc_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3394,8 +3496,8 @@ struct ponfw_xgtc_enc_config {
 #define PONFW_XGTC_OLT_RND_CHAL_TABLE_CMD_ID (PONFW_STD_ITUT | 0x45)
 #define PONFW_XGTC_OLT_RND_CHAL_TABLE_LEN 16
 
-/* HW applicability of XGTC_OLT_RND_CHAL_TABLE */
-#define PONFW_XGTC_OLT_RND_CHAL_TABLE_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_OLT_RND_CHAL_TABLE */
+#define PONFW_XGTC_OLT_RND_CHAL_TABLE_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_olt_rnd_chal_table {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3411,8 +3513,8 @@ struct ponfw_xgtc_olt_rnd_chal_table {
 #define PONFW_XGTC_ONU_RND_CHAL_TABLE_CMD_ID (PONFW_STD_ITUT | 0x46)
 #define PONFW_XGTC_ONU_RND_CHAL_TABLE_LEN 16
 
-/* HW applicability of XGTC_ONU_RND_CHAL_TABLE */
-#define PONFW_XGTC_ONU_RND_CHAL_TABLE_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_ONU_RND_CHAL_TABLE */
+#define PONFW_XGTC_ONU_RND_CHAL_TABLE_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_onu_rnd_chal_table {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3428,8 +3530,8 @@ struct ponfw_xgtc_onu_rnd_chal_table {
 #define PONFW_XGTC_OLT_AUTH_RESULT_TABLE_CMD_ID (PONFW_STD_ITUT | 0x47)
 #define PONFW_XGTC_OLT_AUTH_RESULT_TABLE_LEN 16
 
-/* HW applicability of XGTC_OLT_AUTH_RESULT_TABLE */
-#define PONFW_XGTC_OLT_AUTH_RESULT_TABLE_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_OLT_AUTH_RESULT_TABLE */
+#define PONFW_XGTC_OLT_AUTH_RESULT_TABLE_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_olt_auth_result_table {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3445,8 +3547,8 @@ struct ponfw_xgtc_olt_auth_result_table {
 #define PONFW_XGTC_ONU_AUTH_RESULT_TABLE_CMD_ID (PONFW_STD_ITUT | 0x48)
 #define PONFW_XGTC_ONU_AUTH_RESULT_TABLE_LEN 16
 
-/* HW applicability of XGTC_ONU_AUTH_RESULT_TABLE */
-#define PONFW_XGTC_ONU_AUTH_RESULT_TABLE_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_ONU_AUTH_RESULT_TABLE */
+#define PONFW_XGTC_ONU_AUTH_RESULT_TABLE_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_onu_auth_result_table {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3466,8 +3568,8 @@ struct ponfw_xgtc_onu_auth_result_table {
 /* Broadcast Key Index2 */
 #define PONFW_XGTC_BROADCAST_KEY_TABLE_IDX_IDX2 0x1
 
-/* HW applicability of XGTC_BROADCAST_KEY_TABLE */
-#define PONFW_XGTC_BROADCAST_KEY_TABLE_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_BROADCAST_KEY_TABLE */
+#define PONFW_XGTC_BROADCAST_KEY_TABLE_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_broadcast_key_table {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3491,8 +3593,8 @@ struct ponfw_xgtc_broadcast_key_table {
 #define PONFW_OMCI_ENCAP_CONFIG_CMD_ID (PONFW_STD_ITUT | 0x4B)
 #define PONFW_OMCI_ENCAP_CONFIG_LEN 24
 
-/* HW applicability of OMCI_ENCAP_CONFIG */
-#define PONFW_OMCI_ENCAP_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of OMCI_ENCAP_CONFIG */
+#define PONFW_OMCI_ENCAP_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_omci_encap_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3544,8 +3646,8 @@ struct ponfw_omci_encap_config {
 #define PONFW_MPLS_ENCAP_CONFIG_CMD_ID (PONFW_STD_ITUT | 0x4D)
 #define PONFW_MPLS_ENCAP_CONFIG_LEN 20
 
-/* HW applicability of MPLS_ENCAP_CONFIG */
-#define PONFW_MPLS_ENCAP_CONFIG_HW_PROP	PONFW_PROP_HW_PRXURX
+/* Platform compatibility of MPLS_ENCAP_CONFIG */
+#define PONFW_MPLS_ENCAP_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_mpls_encap_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3597,8 +3699,8 @@ struct ponfw_mpls_encap_config {
 /* The block size is 64 byte. */
 #define PONFW_ONU_QOS_CONFIG_PSF_BS64 64
 
-/* HW applicability of ONU_QOS_CONFIG */
-#define PONFW_ONU_QOS_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ONU_QOS_CONFIG */
+#define PONFW_ONU_QOS_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_onu_qos_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3618,8 +3720,8 @@ struct ponfw_onu_qos_config {
 #define PONFW_TWDM_CONFIG_CMD_ID (PONFW_STD_ITUT | 0x50)
 #define PONFW_TWDM_CONFIG_LEN 8
 
-/* HW applicability of TWDM_CONFIG */
-#define PONFW_TWDM_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TWDM_CONFIG */
+#define PONFW_TWDM_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_twdm_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3659,8 +3761,8 @@ struct ponfw_twdm_config {
 #define PONFW_TIMEOUT_VALUES_CMD_ID (PONFW_STD_ITUT | 0x51)
 #define PONFW_TIMEOUT_VALUES_LEN 36
 
-/* HW applicability of TIMEOUT_VALUES */
-#define PONFW_TIMEOUT_VALUES_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TIMEOUT_VALUES */
+#define PONFW_TIMEOUT_VALUES_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_timeout_values {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3743,6 +3845,10 @@ struct ponfw_timeout_values {
 /** ITU Interoperability Configuration */
 #define PONFW_ONU_INTEROP_CONFIG_CMD_ID (PONFW_STD_ITUT | 0x52)
 #define PONFW_ONU_INTEROP_CONFIG_LEN 4
+/* O3 to O7 transition allowed (default). */
+#define PONFW_ONU_INTEROP_CONFIG_IOP12_STD 0
+/* O3 to O7 transition inhibited. */
+#define PONFW_ONU_INTEROP_CONFIG_IOP12_O3_O7_OFF 1
 /* Disabled (default) */
 #define PONFW_ONU_INTEROP_CONFIG_IOP11_STD 0
 /* Laser switch-off after dying -gasp alarm. */
@@ -3788,13 +3894,15 @@ struct ponfw_timeout_values {
 /* Unencrypted OMCC (required for some OLT types) */
 #define PONFW_ONU_INTEROP_CONFIG_IOP0_UNENC 1
 
-/* HW applicability of ONU_INTEROP_CONFIG */
-#define PONFW_ONU_INTEROP_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ONU_INTEROP_CONFIG */
+#define PONFW_ONU_INTEROP_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_onu_interop_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
 	/* Reserved */
-	uint32_t res : 20;
+	uint32_t res : 19;
+	/* PON Interoperability Mode 12 - O3-to-O7 Inhibit */
+	uint32_t iop12 : 1;
 	/* PON Interoperability Mode 11 - Laser-Off Timer */
 	uint32_t iop11 : 1;
 	/* PON Interoperability Mode 10 - Addition Request */
@@ -3848,8 +3956,10 @@ struct ponfw_onu_interop_config {
 	uint32_t iop10 : 1;
 	/* PON Interoperability Mode 11 - Laser-Off Timer */
 	uint32_t iop11 : 1;
+	/* PON Interoperability Mode 12 - O3-to-O7 Inhibit */
+	uint32_t iop12 : 1;
 	/* Reserved */
-	uint32_t res : 20;
+	uint32_t res : 19;
 #endif
 } __PACKED__;
 
@@ -3857,8 +3967,8 @@ struct ponfw_onu_interop_config {
 #define PONFW_TWDM_POWER_CMD_ID (PONFW_STD_ITUT | 0x53)
 #define PONFW_TWDM_POWER_LEN 4
 
-/* HW applicability of TWDM_POWER */
-#define PONFW_TWDM_POWER_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TWDM_POWER */
+#define PONFW_TWDM_POWER_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_twdm_power {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3882,8 +3992,8 @@ struct ponfw_twdm_power {
 #define PONFW_BURST_PAUSE_CONFIG_CMD_ID (0x54)
 #define PONFW_BURST_PAUSE_CONFIG_LEN 32
 
-/* HW applicability of BURST_PAUSE_CONFIG */
-#define PONFW_BURST_PAUSE_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of BURST_PAUSE_CONFIG */
+#define PONFW_BURST_PAUSE_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_burst_pause_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3927,8 +4037,8 @@ struct ponfw_burst_pause_config {
 #define PONFW_XGTC_CREDENTIALS_CONFIG_CMD_ID (PONFW_STD_ITUT | 0x55)
 #define PONFW_XGTC_CREDENTIALS_CONFIG_LEN 44
 
-/* HW applicability of XGTC_CREDENTIALS_CONFIG */
-#define PONFW_XGTC_CREDENTIALS_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_CREDENTIALS_CONFIG */
+#define PONFW_XGTC_CREDENTIALS_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_credentials_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -3948,8 +4058,8 @@ struct ponfw_xgtc_credentials_config {
 #define PONFW_GTC_CREDENTIALS_CONFIG_CMD_ID (PONFW_STD_ITUT | 0x56)
 #define PONFW_GTC_CREDENTIALS_CONFIG_LEN 20
 
-/* HW applicability of GTC_CREDENTIALS_CONFIG */
-#define PONFW_GTC_CREDENTIALS_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GTC_CREDENTIALS_CONFIG */
+#define PONFW_GTC_CREDENTIALS_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_gtc_credentials_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -4021,8 +4131,8 @@ struct ponfw_gtc_credentials_config {
 /* The optical transmitter is disabled. */
 #define PONFW_LINK_CONTROL_TXDIS_DIS 1
 
-/* HW applicability of LINK_CONTROL */
-#define PONFW_LINK_CONTROL_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of LINK_CONTROL */
+#define PONFW_LINK_CONTROL_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_link_control {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -4054,8 +4164,8 @@ struct ponfw_link_control {
 #define PONFW_REQUESTING_ADAPTATION_CONFIG_CMD_ID (PONFW_STD_ITUT | 0x58)
 #define PONFW_REQUESTING_ADAPTATION_CONFIG_LEN 8
 
-/* HW applicability of REQUESTING_ADAPTATION_CONFIG */
-#define PONFW_REQUESTING_ADAPTATION_CONFIG_HW_PROP	PONFW_PROP_HW_PRXURX
+/* Platform compatibility of REQUESTING_ADAPTATION_CONFIG */
+#define PONFW_REQUESTING_ADAPTATION_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_PRX_URX
 
 struct ponfw_requesting_adaptation_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -4094,18 +4204,14 @@ struct ponfw_requesting_adaptation_config {
 #define PONFW_DESC_CONTROL_CONFIG_FSMACT_DEACT 0
 /* Activate. */
 #define PONFW_DESC_CONTROL_CONFIG_FSMACT_ACT 1
-/* Request Mode: FSM reacts only on requests coming from FW. */
-#define PONFW_DESC_CONTROL_CONFIG_FSMMODE_REQUEST 0
-/* Watermark Mode: FSM refills POBUF autonomously. */
-#define PONFW_DESC_CONTROL_CONFIG_FSMMODE_WATERMARK 1
 
-/* HW applicability of DESC_CONTROL_CONFIG */
-#define PONFW_DESC_CONTROL_CONFIG_HW_PROP	PONFW_PROP_HW_TOPAZ
+/* Platform compatibility of DESC_CONTROL_CONFIG */
+#define PONFW_DESC_CONTROL_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_TPZ
 
 struct ponfw_desc_control_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
 	/* Reserved */
-	uint32_t res1 : 22;
+	uint32_t res1 : 23;
 	/* Monitored AIX */
 	uint32_t monitor : 5;
 	/* Activity Fixed Value */
@@ -4114,8 +4220,6 @@ struct ponfw_desc_control_config {
 	uint32_t actdet : 1;
 	/* FSM Activation */
 	uint32_t fsmact : 1;
-	/* FSM Mode Select */
-	uint32_t fsmmode : 1;
 	/* Replenishment Address */
 	uint32_t repladdr;
 	/* SBM Return Address */
@@ -4124,28 +4228,28 @@ struct ponfw_desc_control_config {
 	uint32_t bbmaddr;
 	/* Maximum POBUF Subtraction */
 	uint32_t maxreqpobufsub : 18;
-	/* Reserved */
-	uint32_t res2 : 6;
+	/* Minimum Packet Size */
+	uint32_t minpktsize : 6;
 	/* Packet Overhead */
 	uint32_t packetoh : 8;
 	/* Reserved */
-	uint32_t res3 : 16;
-	/* Careful Margin */
-	uint32_t cmargin : 16;
+	uint32_t res2 : 16;
+	/* Careful Margin for Request Mode */
+	uint32_t cmarginreq : 16;
 	/* Reserved */
-	uint32_t res4 : 3;
+	uint32_t res3 : 3;
 	/* Minimum Number of Free POBUF Segments */
 	uint32_t minfreespace : 9;
 	/* Reserved */
-	uint32_t res5 : 2;
+	uint32_t res4 : 2;
 	/* Maximum POBUF Occupation per AIX */
 	uint32_t maxperaix : 18;
 	/* Reserved */
-	uint32_t res6 : 19;
+	uint32_t res5 : 19;
 	/* Maximum DMA Descriptors (Careful) */
 	uint32_t maxringcareful : 5;
 	/* Reserved */
-	uint32_t res7 : 3;
+	uint32_t res6 : 3;
 	/* Maximum DMA Descriptors (Normal) */
 	uint32_t maxringnormal : 5;
 	/* Maximum DMA Size (Normal) */
@@ -4159,8 +4263,6 @@ struct ponfw_desc_control_config {
 	/* POBUF Free Space In-Flight Enable Mask */
 	uint32_t pfreespaceinflight;
 #else
-	/* FSM Mode Select */
-	uint32_t fsmmode : 1;
 	/* FSM Activation */
 	uint32_t fsmact : 1;
 	/* Activity Detection */
@@ -4170,7 +4272,7 @@ struct ponfw_desc_control_config {
 	/* Monitored AIX */
 	uint32_t monitor : 5;
 	/* Reserved */
-	uint32_t res1 : 22;
+	uint32_t res1 : 23;
 	/* Replenishment Address */
 	uint32_t repladdr;
 	/* SBM Return Address */
@@ -4179,30 +4281,30 @@ struct ponfw_desc_control_config {
 	uint32_t bbmaddr;
 	/* Packet Overhead */
 	uint32_t packetoh : 8;
-	/* Reserved */
-	uint32_t res2 : 6;
+	/* Minimum Packet Size */
+	uint32_t minpktsize : 6;
 	/* Maximum POBUF Subtraction */
 	uint32_t maxreqpobufsub : 18;
-	/* Careful Margin */
-	uint32_t cmargin : 16;
+	/* Careful Margin for Request Mode */
+	uint32_t cmarginreq : 16;
 	/* Reserved */
-	uint32_t res3 : 16;
+	uint32_t res2 : 16;
 	/* Maximum POBUF Occupation per AIX */
 	uint32_t maxperaix : 18;
 	/* Reserved */
-	uint32_t res5 : 2;
+	uint32_t res4 : 2;
 	/* Minimum Number of Free POBUF Segments */
 	uint32_t minfreespace : 9;
 	/* Reserved */
-	uint32_t res4 : 3;
+	uint32_t res3 : 3;
 	/* Maximum DMA Descriptors (Normal) */
 	uint32_t maxringnormal : 5;
 	/* Reserved */
-	uint32_t res7 : 3;
+	uint32_t res6 : 3;
 	/* Maximum DMA Descriptors (Careful) */
 	uint32_t maxringcareful : 5;
 	/* Reserved */
-	uint32_t res6 : 19;
+	uint32_t res5 : 19;
 	/* Maximum DMA Size (Careful) */
 	uint32_t maxdmasizenormal : 16;
 	/* Maximum DMA Size (Normal) */
@@ -4218,67 +4320,29 @@ struct ponfw_desc_control_config {
 
 /** Descriptor Controller Configuration Watermark */
 #define PONFW_DESC_CONTROL_WMK_CONFIG_CMD_ID (PONFW_STD_ITUT | 0x5A)
-#define PONFW_DESC_CONTROL_WMK_CONFIG_LEN 172
-/* Request Mode: FSM reacts only on requests coming from FW. */
-#define PONFW_DESC_CONTROL_WMK_CONFIG_FSMMODE_REQUEST 0
-/* Watermark Mode: FSM refills POBUF autonomously. */
-#define PONFW_DESC_CONTROL_WMK_CONFIG_FSMMODE_WATERMARK 1
+#define PONFW_DESC_CONTROL_WMK_CONFIG_LEN 140
 
-/* HW applicability of DESC_CONTROL_WMK_CONFIG */
-#define PONFW_DESC_CONTROL_WMK_CONFIG_HW_PROP	PONFW_PROP_HW_TOPAZ
+/* Platform compatibility of DESC_CONTROL_WMK_CONFIG */
+#define PONFW_DESC_CONTROL_WMK_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_TPZ
 
 struct ponfw_desc_control_wmk_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
-	/* Reserved */
-	uint32_t res1 : 31;
-	/* FSM Mode Select */
-	uint32_t fsmmode : 1;
 	/* Minimum Request Size for Priority Refill */
 	uint32_t minsizep : 8;
 	/* Reserved */
-	uint32_t res2 : 6;
+	uint32_t res1 : 6;
 	/* Maximum Request Size for Priority Refill */
 	uint32_t maxsizep : 18;
 	/* Minimum Request Size for Background Refill */
 	uint32_t minsizeb : 8;
 	/* Reserved */
-	uint32_t res3 : 6;
+	uint32_t res2 : 6;
 	/* Maximum Request Size for Background Refill */
 	uint32_t maxsizeb : 18;
-	/* Priority Refill Start */
-	uint32_t priorefillstart : 16;
+	/* Careful Margin for Watermark Mode */
+	uint32_t cmarginwmk : 16;
 	/* Request Duration */
 	uint32_t reqduration : 16;
-	/* Reserved */
-	uint32_t res4 : 16;
-	/* Careful Margin */
-	uint32_t cmargin : 16;
-	/* Reserved */
-	uint32_t res5 : 3;
-	/* Minimum Number of Free POBUF Segments */
-	uint32_t minfreespace : 9;
-	/* Reserved */
-	uint32_t res6 : 2;
-	/* Maximum POBUF Occupation per AIX */
-	uint32_t maxperaix : 18;
-	/* Reserved */
-	uint32_t res7 : 19;
-	/* Maximum DMA Descriptors (Careful) */
-	uint32_t maxringcareful : 5;
-	/* Reserved */
-	uint32_t res8 : 3;
-	/* Maximum DMA Descriptors (Normal) */
-	uint32_t maxringnormal : 5;
-	/* Maximum DMA Size (Normal) */
-	uint32_t maxdmasizecareful : 16;
-	/* Maximum DMA Size (Careful) */
-	uint32_t maxdmasizenormal : 16;
-	/* POBUF Level Check Enable Mask */
-	uint32_t plevelcheck;
-	/* POBUF Level In-Flight Enable Mask */
-	uint32_t plevelinflight;
-	/* POBUF Free Space In-Flight Enable Mask */
-	uint32_t pfreespaceinflight;
 	/* Target POBUF Filling Level for AIX0 */
 	uint32_t watermark00;
 	/* Target POBUF Filling Level for AIX 1 */
@@ -4344,56 +4408,22 @@ struct ponfw_desc_control_wmk_config {
 	/* Target POBUF Filling Level for AIX 31 */
 	uint32_t watermark31;
 #else
-	/* FSM Mode Select */
-	uint32_t fsmmode : 1;
-	/* Reserved */
-	uint32_t res1 : 31;
 	/* Maximum Request Size for Priority Refill */
 	uint32_t maxsizep : 18;
 	/* Reserved */
-	uint32_t res2 : 6;
+	uint32_t res1 : 6;
 	/* Minimum Request Size for Priority Refill */
 	uint32_t minsizep : 8;
 	/* Maximum Request Size for Background Refill */
 	uint32_t maxsizeb : 18;
 	/* Reserved */
-	uint32_t res3 : 6;
+	uint32_t res2 : 6;
 	/* Minimum Request Size for Background Refill */
 	uint32_t minsizeb : 8;
 	/* Request Duration */
 	uint32_t reqduration : 16;
-	/* Priority Refill Start */
-	uint32_t priorefillstart : 16;
-	/* Careful Margin */
-	uint32_t cmargin : 16;
-	/* Reserved */
-	uint32_t res4 : 16;
-	/* Maximum POBUF Occupation per AIX */
-	uint32_t maxperaix : 18;
-	/* Reserved */
-	uint32_t res6 : 2;
-	/* Minimum Number of Free POBUF Segments */
-	uint32_t minfreespace : 9;
-	/* Reserved */
-	uint32_t res5 : 3;
-	/* Maximum DMA Descriptors (Normal) */
-	uint32_t maxringnormal : 5;
-	/* Reserved */
-	uint32_t res8 : 3;
-	/* Maximum DMA Descriptors (Careful) */
-	uint32_t maxringcareful : 5;
-	/* Reserved */
-	uint32_t res7 : 19;
-	/* Maximum DMA Size (Careful) */
-	uint32_t maxdmasizenormal : 16;
-	/* Maximum DMA Size (Normal) */
-	uint32_t maxdmasizecareful : 16;
-	/* POBUF Level Check Enable Mask */
-	uint32_t plevelcheck;
-	/* POBUF Level In-Flight Enable Mask */
-	uint32_t plevelinflight;
-	/* POBUF Free Space In-Flight Enable Mask */
-	uint32_t pfreespaceinflight;
+	/* Careful Margin for Watermark Mode */
+	uint32_t cmarginwmk : 16;
 	/* Target POBUF Filling Level for AIX0 */
 	uint32_t watermark00;
 	/* Target POBUF Filling Level for AIX 1 */
@@ -4465,24 +4495,94 @@ struct ponfw_desc_control_wmk_config {
 #define PONFW_ACCOUNTING_BLOCK_CONFIG_CMD_ID (PONFW_STD_ITUT | 0x5B)
 #define PONFW_ACCOUNTING_BLOCK_CONFIG_LEN 8
 
-/* HW applicability of ACCOUNTING_BLOCK_CONFIG */
-#define PONFW_ACCOUNTING_BLOCK_CONFIG_HW_PROP	PONFW_PROP_HW_TOPAZ
+/* Platform compatibility of ACCOUNTING_BLOCK_CONFIG */
+#define PONFW_ACCOUNTING_BLOCK_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_TPZ
 
 struct ponfw_accounting_block_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
 	/* Reserved */
-	uint32_t res : 16;
-	/* Packet Adder */
-	uint32_t perpacketadder : 16;
-	/* Inactive Sum */
-	uint32_t inactivesum;
-#else
-	/* Packet Adder */
+	uint32_t res1 : 1;
+	/* Monitored AIX */
+	uint32_t monitor : 5;
+	/* DBRU Event Configuration */
+	uint32_t dbruevt : 10;
+	/* Per Packet Adder Configuration */
 	uint32_t perpacketadder : 16;
 	/* Reserved */
-	uint32_t res : 16;
+	uint32_t res2 : 8;
 	/* Inactive Sum */
-	uint32_t inactivesum;
+	uint32_t inactivesum : 24;
+#else
+	/* Per Packet Adder Configuration */
+	uint32_t perpacketadder : 16;
+	/* DBRU Event Configuration */
+	uint32_t dbruevt : 10;
+	/* Monitored AIX */
+	uint32_t monitor : 5;
+	/* Reserved */
+	uint32_t res1 : 1;
+	/* Inactive Sum */
+	uint32_t inactivesum : 24;
+	/* Reserved */
+	uint32_t res2 : 8;
+#endif
+} __PACKED__;
+
+/** ETH_US Configuration */
+#define PONFW_ETH_US_CONFIG_CMD_ID (PONFW_STD_ITUT | 0x5C)
+#define PONFW_ETH_US_CONFIG_LEN 4
+
+/* Platform compatibility of ETH_US_CONFIG */
+#define PONFW_ETH_US_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_TPZ
+
+struct ponfw_eth_us_config {
+#if __BYTE_ORDER == __BIG_ENDIAN
+	/* Maximum Transfer Unit (MTU) */
+	uint32_t mtu : 16;
+	/* Padding Pattern */
+	uint32_t pad_pat : 8;
+	/* Padding Length */
+	uint32_t pad_len : 8;
+#else
+	/* Padding Length */
+	uint32_t pad_len : 8;
+	/* Padding Pattern */
+	uint32_t pad_pat : 8;
+	/* Maximum Transfer Unit (MTU) */
+	uint32_t mtu : 16;
+#endif
+} __PACKED__;
+
+/** ETH_US RMON Counter Reset */
+#define PONFW_ETH_US_RMON_COUNTER_RESET_CMD_ID (PONFW_STD_ITUT | 0x92)
+#define PONFW_ETH_US_RMON_COUNTER_RESET_LEN 4
+/* No operation or operation completed. */
+#define PONFW_ETH_US_RMON_COUNTER_RESET_VLANRMON_NIL 0
+/* Resets the counters */
+#define PONFW_ETH_US_RMON_COUNTER_RESET_VLANRMON_CLEAR 1
+/* No operation or operation completed. */
+#define PONFW_ETH_US_RMON_COUNTER_RESET_PORTRMON_NIL 0
+/* Resets the counters */
+#define PONFW_ETH_US_RMON_COUNTER_RESET_PORTRMON_CLEAR 1
+
+/* Platform compatibility of ETH_US_RMON_COUNTER_RESET */
+#define PONFW_ETH_US_RMON_COUNTER_RESET_PLAT_COMPATIBILITY PONFW_PLAT_TPZ
+
+struct ponfw_eth_us_rmon_counter_reset {
+#if __BYTE_ORDER == __BIG_ENDIAN
+	/* Reserved */
+	uint32_t res : 30;
+	/* VLAN RMON Group Counter Clear Operation */
+	uint32_t vlanrmon : 1;
+	/* Port RMON Counter Clear Operation */
+	uint32_t portrmon : 1;
+#else
+	/* Port RMON Counter Clear Operation */
+	uint32_t portrmon : 1;
+	/* VLAN RMON Group Counter Clear Operation */
+	uint32_t vlanrmon : 1;
+	/* Reserved */
+	uint32_t res : 30;
 #endif
 } __PACKED__;
 
@@ -4490,7 +4590,6 @@ struct ponfw_accounting_block_config {
 #define PONFW_GEM_PORT_ID_CMD_ID (PONFW_STD_ITUT | 0x60)
 #define PONFW_GEM_PORT_ID_LENW 12
 #define PONFW_GEM_PORT_ID_LENR 4
-
 /* Ethernet (G.989), Ethernet unicast (G.984) */
 #define PONFW_GEM_PORT_ID_TT_ETH 0
 /* OMCI (G.984, G.989) */
@@ -4518,8 +4617,8 @@ struct ponfw_accounting_block_config {
 /* Enable selecting a GEM port Index */
 #define PONFW_GEM_PORT_ID_USE_IDX_EN 1
 
-/* HW applicability of GEM_PORT_ID */
-#define PONFW_GEM_PORT_ID_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GEM_PORT_ID */
+#define PONFW_GEM_PORT_ID_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_gem_port_id {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -4579,8 +4678,8 @@ struct ponfw_gem_port_id {
 #define PONFW_GEM_PORT_ID_REMOVE_CMD_ID (PONFW_STD_ITUT | 0x62)
 #define PONFW_GEM_PORT_ID_REMOVE_LEN 4
 
-/* HW applicability of GEM_PORT_ID_REMOVE */
-#define PONFW_GEM_PORT_ID_REMOVE_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GEM_PORT_ID_REMOVE */
+#define PONFW_GEM_PORT_ID_REMOVE_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_gem_port_id_remove {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -4604,7 +4703,6 @@ struct ponfw_gem_port_id_remove {
 #define PONFW_ALLOC_ID_LINK_CMD_ID (PONFW_STD_ITUT | 0x63)
 #define PONFW_ALLOC_ID_LINK_LENW 8
 #define PONFW_ALLOC_ID_LINK_LENR 4
-
 /* Read the Allocation information only. Do not request usage of this
  * Allocation ID.
  */
@@ -4636,8 +4734,8 @@ struct ponfw_gem_port_id_remove {
  */
 #define PONFW_ALLOC_ID_LINK_LINK_STATUS_ASSIGNED 0x2
 
-/* HW applicability of ALLOC_ID_LINK */
-#define PONFW_ALLOC_ID_LINK_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ALLOC_ID_LINK */
+#define PONFW_ALLOC_ID_LINK_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_alloc_id_link {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -4677,8 +4775,8 @@ struct ponfw_alloc_id_link {
 #define PONFW_ALLOC_ID_UNLINK_CMD_ID (PONFW_STD_ITUT | 0x64)
 #define PONFW_ALLOC_ID_UNLINK_LEN 8
 
-/* HW applicability of ALLOC_ID_UNLINK */
-#define PONFW_ALLOC_ID_UNLINK_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ALLOC_ID_UNLINK */
+#define PONFW_ALLOC_ID_UNLINK_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_alloc_id_unlink {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -4706,14 +4804,13 @@ struct ponfw_alloc_id_unlink {
 #define PONFW_ALLOC_TO_GEM_MAP_CMD_ID (PONFW_STD_ITUT | 0x66)
 #define PONFW_ALLOC_TO_GEM_MAP_LENR 8
 #define PONFW_ALLOC_TO_GEM_MAP_MAXLENR 508
-
 /* This is the last response message. */
 #define PONFW_ALLOC_TO_GEM_MAP_PEND_DONE 0x0
 /* There are more GEM ports to be reported. */
 #define PONFW_ALLOC_TO_GEM_MAP_PEND_PENDING 0x1
 
-/* HW applicability of ALLOC_TO_GEM_MAP */
-#define PONFW_ALLOC_TO_GEM_MAP_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ALLOC_TO_GEM_MAP */
+#define PONFW_ALLOC_TO_GEM_MAP_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_alloc_to_gem_map {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -4758,9 +4855,8 @@ struct ponfw_alloc_to_gem_map {
 #define PONFW_GEM_ALLOC_MAP_LENR 4
 #define PONFW_GEM_ALLOC_MAP_LEN 8
 
-
-/* HW applicability of GEM_ALLOC_MAP */
-#define PONFW_GEM_ALLOC_MAP_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GEM_ALLOC_MAP */
+#define PONFW_GEM_ALLOC_MAP_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_gem_alloc_map {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -4788,7 +4884,6 @@ struct ponfw_gem_alloc_map {
 #define PONFW_GEM_PORT_IDX_CMD_ID (PONFW_STD_ITUT | 0x6A)
 #define PONFW_GEM_PORT_IDX_LENR 4
 #define PONFW_GEM_PORT_IDX_LEN 8
-
 /* Ethernet (G.989), Ethernet unicast (G.984) */
 #define PONFW_GEM_PORT_IDX_TT_ETH 0
 /* OMCI (G.984, G.989) */
@@ -4812,8 +4907,8 @@ struct ponfw_gem_alloc_map {
 /* Bidirectional */
 #define PONFW_GEM_PORT_IDX_DIR_BI 3
 
-/* HW applicability of GEM_PORT_IDX */
-#define PONFW_GEM_PORT_IDX_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GEM_PORT_IDX */
+#define PONFW_GEM_PORT_IDX_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_gem_port_idx {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -4865,7 +4960,6 @@ struct ponfw_gem_port_idx {
 #define PONFW_ALLOC_IDX_CMD_ID (PONFW_STD_ITUT | 0x6B)
 #define PONFW_ALLOC_IDX_LENR 4
 #define PONFW_ALLOC_IDX_LEN 8
-
 /* The Alloc ID has not been assigned by the OLT and is free to be used. In
  * this case ALLOC_ID and ALLOC_LINK_REF will return zero.
  */
@@ -4885,15 +4979,15 @@ struct ponfw_gem_port_idx {
  * ALLOC_ID_UNLINK.
  */
 #define PONFW_ALLOC_IDX_STATUS_LINKED 3
-/* The Alloc ID has been de-assigned by the OLT through PLOAM but the software
- * has requested this for OMCI-controlled GEM port mapping. It cannot be
- * deleted through PLOAM without waiting for software confirmation through
- * ALLOC_ID_UNLINK.
+/* The Alloc ID has been de-assigned by the OLT through PLOAM but the
+ * software has requested this for OMCI-controlled GEM port mapping. It
+ * cannot be deleted through PLOAM without waiting for software confirmation
+ * through ALLOC_ID_UNLINK.
  */
 #define PONFW_ALLOC_IDX_STATUS_BLOCKED 4
 
-/* HW applicability of ALLOC_IDX */
-#define PONFW_ALLOC_IDX_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ALLOC_IDX */
+#define PONFW_ALLOC_IDX_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_alloc_idx {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -4929,8 +5023,8 @@ struct ponfw_alloc_idx {
 #define PONFW_GTC_COUNTERS_CMD_ID (PONFW_STD_ITUT | 0x81)
 #define PONFW_GTC_COUNTERS_LEN 68
 
-/* HW applicability of GTC_COUNTERS */
-#define PONFW_GTC_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GTC_COUNTERS */
+#define PONFW_GTC_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_gtc_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -5038,8 +5132,8 @@ struct ponfw_gtc_counters {
 #define PONFW_XGTC_COUNTERS_CMD_ID (PONFW_STD_ITUT | 0x82)
 #define PONFW_XGTC_COUNTERS_LEN 44
 
-/* HW applicability of XGTC_COUNTERS */
-#define PONFW_XGTC_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_COUNTERS */
+#define PONFW_XGTC_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -5115,8 +5209,8 @@ struct ponfw_xgtc_counters {
 #define PONFW_GTC_PLOAM_DS_COUNTERS_CMD_ID (PONFW_STD_ITUT | 0x83)
 #define PONFW_GTC_PLOAM_DS_COUNTERS_LEN 92
 
-/* HW applicability of GTC_PLOAM_DS_COUNTERS */
-#define PONFW_GTC_PLOAM_DS_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GTC_PLOAM_DS_COUNTERS */
+#define PONFW_GTC_PLOAM_DS_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_gtc_ploam_ds_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -5220,8 +5314,8 @@ struct ponfw_gtc_ploam_ds_counters {
 #define PONFW_GTC_PLOAM_US_COUNTERS_CMD_ID (PONFW_STD_ITUT | 0x84)
 #define PONFW_GTC_PLOAM_US_COUNTERS_LEN 40
 
-/* HW applicability of GTC_PLOAM_US_COUNTERS */
-#define PONFW_GTC_PLOAM_US_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GTC_PLOAM_US_COUNTERS */
+#define PONFW_GTC_PLOAM_US_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_gtc_ploam_us_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -5273,8 +5367,8 @@ struct ponfw_gtc_ploam_us_counters {
 #define PONFW_XGTC_PLOAM_DS_COUNTERS_CMD_ID (PONFW_STD_ITUT | 0x85)
 #define PONFW_XGTC_PLOAM_DS_COUNTERS_LEN 92
 
-/* HW applicability of XGTC_PLOAM_DS_COUNTERS */
-#define PONFW_XGTC_PLOAM_DS_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_PLOAM_DS_COUNTERS */
+#define PONFW_XGTC_PLOAM_DS_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_ploam_ds_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -5378,8 +5472,8 @@ struct ponfw_xgtc_ploam_ds_counters {
 #define PONFW_XGTC_PLOAM_US_COUNTERS_CMD_ID (PONFW_STD_ITUT | 0x86)
 #define PONFW_XGTC_PLOAM_US_COUNTERS_LEN 44
 
-/* HW applicability of XGTC_PLOAM_US_COUNTERS */
-#define PONFW_XGTC_PLOAM_US_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGTC_PLOAM_US_COUNTERS */
+#define PONFW_XGTC_PLOAM_US_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgtc_ploam_us_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -5436,9 +5530,8 @@ struct ponfw_xgtc_ploam_us_counters {
 #define PONFW_GEM_PORT_COUNTERS_LENR 4
 #define PONFW_GEM_PORT_COUNTERS_LEN 60
 
-
-/* HW applicability of GEM_PORT_COUNTERS */
-#define PONFW_GEM_PORT_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GEM_PORT_COUNTERS */
+#define PONFW_GEM_PORT_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_gem_port_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -5542,8 +5635,8 @@ struct ponfw_gem_port_counters {
 #define PONFW_PSM_COUNTERS_CMD_ID (PONFW_STD_ITUT | 0x88)
 #define PONFW_PSM_COUNTERS_LEN 24
 
-/* HW applicability of PSM_COUNTERS */
-#define PONFW_PSM_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of PSM_COUNTERS */
+#define PONFW_PSM_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_psm_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -5579,8 +5672,8 @@ struct ponfw_psm_counters {
 #define PONFW_GTC_ENHANCED_COUNTERS_CMD_ID (PONFW_STD_ITUT | 0x89)
 #define PONFW_GTC_ENHANCED_COUNTERS_LEN 24
 
-/* HW applicability of GTC_ENHANCED_COUNTERS */
-#define PONFW_GTC_ENHANCED_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of GTC_ENHANCED_COUNTERS */
+#define PONFW_GTC_ENHANCED_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_gtc_enhanced_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -5625,9 +5718,8 @@ struct ponfw_gtc_enhanced_counters {
 #define PONFW_ALLOC_ID_COUNTERS_LENR 4
 #define PONFW_ALLOC_ID_COUNTERS_LEN 20
 
-
-/* HW applicability of ALLOC_ID_COUNTERS */
-#define PONFW_ALLOC_ID_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ALLOC_ID_COUNTERS */
+#define PONFW_ALLOC_ID_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_alloc_id_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -5672,9 +5764,8 @@ struct ponfw_alloc_id_counters {
 #define PONFW_RX_ETH_COUNTERS_LENR 4
 #define PONFW_RX_ETH_COUNTERS_LEN 100
 
-
-/* HW applicability of RX_ETH_COUNTERS */
-#define PONFW_RX_ETH_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of RX_ETH_COUNTERS */
+#define PONFW_RX_ETH_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_rx_eth_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -5847,9 +5938,8 @@ struct ponfw_rx_eth_counters {
 #define PONFW_TX_ETH_COUNTERS_LENR 4
 #define PONFW_TX_ETH_COUNTERS_LEN 76
 
-
-/* HW applicability of TX_ETH_COUNTERS */
-#define PONFW_TX_ETH_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TX_ETH_COUNTERS */
+#define PONFW_TX_ETH_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_tx_eth_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -5977,8 +6067,8 @@ struct ponfw_tx_eth_counters {
 #define PONFW_ALLOC_LOST_COUNTERS_CMD_ID (PONFW_STD_ITUT | 0x8D)
 #define PONFW_ALLOC_LOST_COUNTERS_LEN 116
 
-/* HW applicability of ALLOC_LOST_COUNTERS */
-#define PONFW_ALLOC_LOST_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ALLOC_LOST_COUNTERS */
+#define PONFW_ALLOC_LOST_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_alloc_lost_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -6138,8 +6228,8 @@ struct ponfw_alloc_lost_counters {
 #define PONFW_TWDM_TC_COUNTERS_CMD_ID (PONFW_STD_ITUT | 0x8E)
 #define PONFW_TWDM_TC_COUNTERS_LEN 136
 
-/* HW applicability of TWDM_TC_COUNTERS */
-#define PONFW_TWDM_TC_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TWDM_TC_COUNTERS */
+#define PONFW_TWDM_TC_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_twdm_tc_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -6155,8 +6245,8 @@ struct ponfw_twdm_tc_counters {
 #define PONFW_TWDM_ONU_OPTIC_PL_COUNTERS_CMD_ID (PONFW_STD_ITUT | 0x8F)
 #define PONFW_TWDM_ONU_OPTIC_PL_COUNTERS_LEN 12
 
-/* HW applicability of TWDM_ONU_OPTIC_PL_COUNTERS */
-#define PONFW_TWDM_ONU_OPTIC_PL_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TWDM_ONU_OPTIC_PL_COUNTERS */
+#define PONFW_TWDM_ONU_OPTIC_PL_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_twdm_onu_optic_pl_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -6180,8 +6270,8 @@ struct ponfw_twdm_onu_optic_pl_counters {
 #define PONFW_TWDM_LODS_COUNTERS_CMD_ID (PONFW_STD_ITUT | 0x91)
 #define PONFW_TWDM_LODS_COUNTERS_LEN 28
 
-/* HW applicability of TWDM_LODS_COUNTERS */
-#define PONFW_TWDM_LODS_COUNTERS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of TWDM_LODS_COUNTERS */
+#define PONFW_TWDM_LODS_COUNTERS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_twdm_lods_counters {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -6271,8 +6361,8 @@ struct ponfw_twdm_lods_counters {
  */
 #define PONFW_DEBUG_CONFIG_PLOAMD_EN 1
 
-/* HW applicability of DEBUG_CONFIG */
-#define PONFW_DEBUG_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_CONFIG */
+#define PONFW_DEBUG_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -6340,7 +6430,6 @@ struct ponfw_debug_config {
 #define PONFW_DEBUG_DATA_ACCESS_CMD_ID (0xE1)
 #define PONFW_DEBUG_DATA_ACCESS_MAXLENW 508
 #define PONFW_DEBUG_DATA_ACCESS_LENR 8
-
 /* I/O bus access */
 #define PONFW_DEBUG_DATA_ACCESS_BUS_IO 0
 /* Crossbar access */
@@ -6348,8 +6437,8 @@ struct ponfw_debug_config {
 /* Memory access */
 #define PONFW_DEBUG_DATA_ACCESS_BUS_MEM 2
 
-/* HW applicability of DEBUG_DATA_ACCESS */
-#define PONFW_DEBUG_DATA_ACCESS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_DATA_ACCESS */
+#define PONFW_DEBUG_DATA_ACCESS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_data_access {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -6381,8 +6470,8 @@ struct ponfw_debug_data_access {
 #define PONFW_DEBUG_GTC_PLOAM_SEND_CMD_ID (PONFW_STD_ITUT | 0xE2)
 #define PONFW_DEBUG_GTC_PLOAM_SEND_LEN 12
 
-/* HW applicability of DEBUG_GTC_PLOAM_SEND */
-#define PONFW_DEBUG_GTC_PLOAM_SEND_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_GTC_PLOAM_SEND */
+#define PONFW_DEBUG_GTC_PLOAM_SEND_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_gtc_ploam_send {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -6422,8 +6511,8 @@ struct ponfw_debug_gtc_ploam_send {
 #define PONFW_DEBUG_XGTC_PLOAM_SEND_CMD_ID (PONFW_STD_ITUT | 0xE3)
 #define PONFW_DEBUG_XGTC_PLOAM_SEND_LEN 40
 
-/* HW applicability of DEBUG_XGTC_PLOAM_SEND */
-#define PONFW_DEBUG_XGTC_PLOAM_SEND_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_XGTC_PLOAM_SEND */
+#define PONFW_DEBUG_XGTC_PLOAM_SEND_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_xgtc_ploam_send {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -6451,7 +6540,6 @@ struct ponfw_debug_xgtc_ploam_send {
 #define PONFW_DEBUG_GEM_PORT_IDX_CMD_ID (PONFW_STD_ITUT | 0xE9)
 #define PONFW_DEBUG_GEM_PORT_IDX_LENR 4
 #define PONFW_DEBUG_GEM_PORT_IDX_LEN 8
-
 /* Ethernet (G.989), Ethernet unicast (G.984) */
 #define PONFW_DEBUG_GEM_PORT_IDX_TT_ETH 0
 /* OMCI (G.984, G.989) */
@@ -6475,8 +6563,8 @@ struct ponfw_debug_xgtc_ploam_send {
 /* Bidirectional */
 #define PONFW_DEBUG_GEM_PORT_IDX_DIR_BI 3
 
-/* HW applicability of DEBUG_GEM_PORT_IDX */
-#define PONFW_DEBUG_GEM_PORT_IDX_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_GEM_PORT_IDX */
+#define PONFW_DEBUG_GEM_PORT_IDX_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_gem_port_idx {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -6528,7 +6616,6 @@ struct ponfw_debug_gem_port_idx {
 #define PONFW_DEBUG_ALLOC_IDX_CMD_ID (PONFW_STD_ITUT | 0xEA)
 #define PONFW_DEBUG_ALLOC_IDX_LENR 4
 #define PONFW_DEBUG_ALLOC_IDX_LEN 8
-
 /* The Alloc ID has not been assigned by the OLT and is free to be used. In
  * this case ALLOC_ID and ALLOC_LINK_REF will return zero.
  */
@@ -6548,15 +6635,15 @@ struct ponfw_debug_gem_port_idx {
  * ALLOC_ID_UNLINK.
  */
 #define PONFW_DEBUG_ALLOC_IDX_STATUS_LINKED 3
-/* The Alloc ID has been de-assigned by the OLT through PLOAM but the software
- * has requested this for OMCI-controlled GEM port mapping. It cannot be
- * deleted through PLOAM without waiting for software confirmation through
- * ALLOC_ID_UNLINK.
+/* The Alloc ID has been de-assigned by the OLT through PLOAM but the
+ * software has requested this for OMCI-controlled GEM port mapping. It
+ * cannot be deleted through PLOAM without waiting for software confirmation
+ * through ALLOC_ID_UNLINK.
  */
 #define PONFW_DEBUG_ALLOC_IDX_STATUS_BLOCKED 4
 
-/* HW applicability of DEBUG_ALLOC_IDX */
-#define PONFW_DEBUG_ALLOC_IDX_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_ALLOC_IDX */
+#define PONFW_DEBUG_ALLOC_IDX_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_alloc_idx {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -6592,8 +6679,8 @@ struct ponfw_debug_alloc_idx {
 #define PONFW_DEBUG_MAILBOX_LOOP_CMD_ID (0xEB)
 #define PONFW_DEBUG_MAILBOX_LOOP_LEN 508
 
-/* HW applicability of DEBUG_MAILBOX_LOOP */
-#define PONFW_DEBUG_MAILBOX_LOOP_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_MAILBOX_LOOP */
+#define PONFW_DEBUG_MAILBOX_LOOP_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_mailbox_loop {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -6613,8 +6700,8 @@ struct ponfw_debug_mailbox_loop {
 /* The QoS index is mapped. */
 #define PONFW_DEBUG_QOS_IDX_QOS_VALID_VALID 1
 
-/* HW applicability of DEBUG_QOS_IDX */
-#define PONFW_DEBUG_QOS_IDX_HW_PROP	PONFW_PROP_HW_PRXURX
+/* Platform compatibility of DEBUG_QOS_IDX */
+#define PONFW_DEBUG_QOS_IDX_PLAT_COMPATIBILITY PONFW_PLAT_PRX_URX
 
 struct ponfw_debug_qos_idx {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -6656,8 +6743,8 @@ struct ponfw_debug_qos_idx {
 /* DBRu is enabled */
 #define PONFW_DEBUG_DBRU_AIX15_EN 1
 
-/* HW applicability of DEBUG_DBRU */
-#define PONFW_DEBUG_DBRU_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_DBRU */
+#define PONFW_DEBUG_DBRU_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_dbru {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -6929,8 +7016,8 @@ struct ponfw_debug_dbru {
 /* Static alarm mode */
 #define PONFW_DEBUG_TRIGGER_ALARM_MODE_STATIC 1
 
-/* HW applicability of DEBUG_TRIGGER_ALARM */
-#define PONFW_DEBUG_TRIGGER_ALARM_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_TRIGGER_ALARM */
+#define PONFW_DEBUG_TRIGGER_ALARM_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_trigger_alarm {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -7010,8 +7097,8 @@ struct ponfw_debug_trigger_alarm {
 /* XGMII TX/US output */
 #define PONFW_DEBUG_TRACE_CONFIG_SRC_TXOUT 27
 
-/* HW applicability of DEBUG_TRACE_CONFIG */
-#define PONFW_DEBUG_TRACE_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_TRACE_CONFIG */
+#define PONFW_DEBUG_TRACE_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_trace_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -7059,8 +7146,8 @@ struct ponfw_debug_trace_config {
 #define PONFW_DEBUG_TRACE_RESULT_CMD_ID (PONFW_STD_ITUT | 0xF0)
 #define PONFW_DEBUG_TRACE_RESULT_LEN 12
 
-/* HW applicability of DEBUG_TRACE_RESULT */
-#define PONFW_DEBUG_TRACE_RESULT_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_TRACE_RESULT */
+#define PONFW_DEBUG_TRACE_RESULT_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_trace_result {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -7108,8 +7195,8 @@ struct ponfw_debug_trace_result {
  */
 #define PONFW_DEBUG_TRACE_CONTROL_DONE_STOP 1
 
-/* HW applicability of DEBUG_TRACE_CONTROL */
-#define PONFW_DEBUG_TRACE_CONTROL_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_TRACE_CONTROL */
+#define PONFW_DEBUG_TRACE_CONTROL_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_trace_control {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -7141,8 +7228,8 @@ struct ponfw_debug_trace_control {
 /* Force the selected state. */
 #define PONFW_DEBUG_PLOAM_BREAK_FORCE_STATE_FORCE 1
 
-/* HW applicability of DEBUG_PLOAM_BREAK */
-#define PONFW_DEBUG_PLOAM_BREAK_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_PLOAM_BREAK */
+#define PONFW_DEBUG_PLOAM_BREAK_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_ploam_break {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -7242,8 +7329,8 @@ struct ponfw_debug_ploam_break {
 /* The breakpoint is set. */
 #define PONFW_DEBUG_PLOAM_BREAK_STATUS_O_00_SET 1
 
-/* HW applicability of DEBUG_PLOAM_BREAK_STATUS */
-#define PONFW_DEBUG_PLOAM_BREAK_STATUS_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_PLOAM_BREAK_STATUS */
+#define PONFW_DEBUG_PLOAM_BREAK_STATUS_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_ploam_break_status {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -7331,14 +7418,13 @@ struct ponfw_debug_ploam_break_status {
 #define PONFW_DEBUG_RANDOM_VALUES_CMD_ID (0xF4)
 #define PONFW_DEBUG_RANDOM_VALUES_LENR 4
 #define PONFW_DEBUG_RANDOM_VALUES_LEN 20
-
 /* Cryptographic key (128 bit) */
 #define PONFW_DEBUG_RANDOM_VALUES_TYPE_KEY 0
 /* Random delay value (32 bit) */
 #define PONFW_DEBUG_RANDOM_VALUES_TYPE_DELAY 1
 
-/* HW applicability of DEBUG_RANDOM_VALUES */
-#define PONFW_DEBUG_RANDOM_VALUES_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_RANDOM_VALUES */
+#define PONFW_DEBUG_RANDOM_VALUES_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_random_values {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -7362,8 +7448,8 @@ struct ponfw_debug_random_values {
 #define PONFW_ONU_RESP_TIME_OFFSET_CONFIG_CMD_ID (PONFW_STD_ITUT | 0xF5)
 #define PONFW_ONU_RESP_TIME_OFFSET_CONFIG_LEN 4
 
-/* HW applicability of ONU_RESP_TIME_OFFSET_CONFIG */
-#define PONFW_ONU_RESP_TIME_OFFSET_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of ONU_RESP_TIME_OFFSET_CONFIG */
+#define PONFW_ONU_RESP_TIME_OFFSET_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_onu_resp_time_offset_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -7387,8 +7473,8 @@ struct ponfw_onu_resp_time_offset_config {
 /* Second Broadcast Key Index */
 #define PONFW_XGEM_KEY_WRITE_KEY_IDX_BC2 0x3
 
-/* HW applicability of XGEM_KEY_WRITE */
-#define PONFW_XGEM_KEY_WRITE_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of XGEM_KEY_WRITE */
+#define PONFW_XGEM_KEY_WRITE_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_xgem_key_write {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -7484,8 +7570,8 @@ struct ponfw_xgem_key_write {
  */
 #define PONFW_DEBUG_TEST_PATTERN_CONFIG_TX_MODE_TP_MIXED 11
 
-/* HW applicability of DEBUG_TEST_PATTERN_CONFIG */
-#define PONFW_DEBUG_TEST_PATTERN_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_TEST_PATTERN_CONFIG */
+#define PONFW_DEBUG_TEST_PATTERN_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_test_pattern_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -7547,8 +7633,8 @@ struct ponfw_debug_test_pattern_config {
  */
 #define PONFW_DEBUG_TEST_PATTERN_CONTROL_TMO_PON_RLOOP 7
 
-/* HW applicability of DEBUG_TEST_PATTERN_CONTROL */
-#define PONFW_DEBUG_TEST_PATTERN_CONTROL_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_TEST_PATTERN_CONTROL */
+#define PONFW_DEBUG_TEST_PATTERN_CONTROL_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_test_pattern_control {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -7572,8 +7658,8 @@ struct ponfw_debug_test_pattern_control {
 /* Length of write acknowledge. */
 #define PONFW_DEBUG_INSERT_BIT_ERROR_LENGTH_FIXLENWA 0
 
-/* HW applicability of DEBUG_INSERT_BIT_ERROR */
-#define PONFW_DEBUG_INSERT_BIT_ERROR_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_INSERT_BIT_ERROR */
+#define PONFW_DEBUG_INSERT_BIT_ERROR_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 /** Test Pattern Error Counter */
 #define PONFW_DEBUG_BIT_ERROR_COUNTER_CMD_ID (0xFA)
@@ -7583,8 +7669,8 @@ struct ponfw_debug_test_pattern_control {
 /* The counter value exceeds 0x7FFF. */
 #define PONFW_DEBUG_BIT_ERROR_COUNTER_BERR_OFL_HIGH 0x1
 
-/* HW applicability of DEBUG_BIT_ERROR_COUNTER */
-#define PONFW_DEBUG_BIT_ERROR_COUNTER_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_BIT_ERROR_COUNTER */
+#define PONFW_DEBUG_BIT_ERROR_COUNTER_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_bit_error_counter {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -7616,8 +7702,8 @@ struct ponfw_debug_bit_error_counter {
 /* Enable alarm logging */
 #define PONFW_DEBUG_ALARM_CONTROL_CONFIG_LOGEN_LOGEN 0x1
 
-/* HW applicability of DEBUG_ALARM_CONTROL_CONFIG */
-#define PONFW_DEBUG_ALARM_CONTROL_CONFIG_HW_PROP	PONFW_PROP_HW_ALL
+/* Platform compatibility of DEBUG_ALARM_CONTROL_CONFIG */
+#define PONFW_DEBUG_ALARM_CONTROL_CONFIG_PLAT_COMPATIBILITY PONFW_PLAT_ALL
 
 struct ponfw_debug_alarm_control_config {
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -7642,7 +7728,7 @@ struct ponfw_debug_alarm_control_config {
 } __PACKED__;
 
 /** Maximum message length in 32 bit words */
-#define PONFW_MSG_MAX_LEN 86
+#define PONFW_MSG_MAX_LEN 70
 /** Maximum message cmd id */
 #define PONFW_MSG_CMD_ID 0xFB
 
@@ -7701,6 +7787,10 @@ union ponfw_msg {
 	struct ponfw_twdm_optic_config twdm_optic_config;
 	/** Loop Timing Configuration */
 	struct ponfw_loop_time_config loop_time_config;
+	/** Loop Timing Synchronization SW-to-FW */
+	struct ponfw_loop_timing_sync_sw2fw loop_timing_sync_sw2fw;
+	/** Loop Timing Synchronization FW-to-SW */
+	struct ponfw_loop_timing_sync_fw2sw loop_timing_sync_fw2sw;
 	/** Physical Equipment Error Configuration */
 	struct ponfw_pee_config pee_config;
 	/** Alarm Control Configuration */
@@ -7797,6 +7887,10 @@ union ponfw_msg {
 	struct ponfw_desc_control_wmk_config desc_control_wmk_config;
 	/** Accounting Block Configuration */
 	struct ponfw_accounting_block_config accounting_block_config;
+	/** ETH_US Configuration */
+	struct ponfw_eth_us_config eth_us_config;
+	/** ETH_US RMON Counter Reset */
+	struct ponfw_eth_us_rmon_counter_reset eth_us_rmon_counter_reset;
 	/** GEM Port ID */
 	struct ponfw_gem_port_id gem_port_id;
 	/** GEM Port ID Remove */
@@ -7941,6 +8035,10 @@ union ponfw_msg {
 		sizeof(struct ponfw_twdm_optic_config),\
 	[PONFW_LOOP_TIME_CONFIG_CMD_ID] =\
 		sizeof(struct ponfw_loop_time_config),\
+	[PONFW_LOOP_TIMING_SYNC_SW2FW_CMD_ID] =\
+		sizeof(struct ponfw_loop_timing_sync_sw2fw),\
+	[PONFW_LOOP_TIMING_SYNC_FW2SW_CMD_ID] =\
+		sizeof(struct ponfw_loop_timing_sync_fw2sw),\
 	[PONFW_PEE_CONFIG_CMD_ID] =\
 		sizeof(struct ponfw_pee_config),\
 	[PONFW_ALARM_CONTROL_CONFIG_CMD_ID] =\
@@ -8037,6 +8135,10 @@ union ponfw_msg {
 		sizeof(struct ponfw_desc_control_wmk_config),\
 	[PONFW_ACCOUNTING_BLOCK_CONFIG_CMD_ID] =\
 		sizeof(struct ponfw_accounting_block_config),\
+	[PONFW_ETH_US_CONFIG_CMD_ID] =\
+		sizeof(struct ponfw_eth_us_config),\
+	[PONFW_ETH_US_RMON_COUNTER_RESET_CMD_ID] =\
+		sizeof(struct ponfw_eth_us_rmon_counter_reset),\
 	[PONFW_GEM_PORT_ID_CMD_ID] =\
 		sizeof(struct ponfw_gem_port_id),\
 	[PONFW_GEM_PORT_ID_REMOVE_CMD_ID] =\

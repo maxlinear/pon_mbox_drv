@@ -65,16 +65,19 @@
 #include <pon/pon_ip_msg.h>
 #include <pon/pon_mbox_ikm.h>
 #include "pon_eth.h"
+#include "pon_eth_fw_alloc.h"
+#include "pon_eth_fw_gem.h"
 #include "pon_eth_iphost.h"
 
 /** what string support, version string */
-const char pon_eth_whatversion[] = "@(#)MaxLinear PON network driver, version "
-				    __stringify(PACKAGE_VERSION);
+static const char pon_eth_whatversion[] __used =
+	"@(#)MaxLinear PON network driver, version "
+	__stringify(PACKAGE_VERSION);
 
 /** Maximum number of TX queues each T-Cont can have */
-#define PON_TCONT_TX_QUEUES		8
+#define PON_TCONT_TX_QUEUES 8
 /** Maximum number of TX and RX queues to the CPU */
-#define PON_CPU_QUEUES			8
+#define PON_CPU_QUEUES 8
 
 #define QUEUE_LOOKUP_MODE_FLOW_ID_TC_4BIT 0
 #define QUEUE_LOOKUP_MODE_SUBIF_ID 1
@@ -82,12 +85,12 @@ const char pon_eth_whatversion[] = "@(#)MaxLinear PON network driver, version "
 #define QUEUE_LOOKUP_MODE_SUBIF_ID_TC_3BIT 3
 
 /* OUI Extended Ethertype (IEEE Std 802) */
-#define ETH_P_OUI		0x88B7
+#define ETH_P_OUI 0x88B7
 
 /* Common structure for PON net devices */
 struct ltq_pon_net_common {
 	u32 ethtool_flags;
-	#define ETHTOOL_FLAG_BP_CPU_ENABLE	BIT(0)
+#define ETHTOOL_FLAG_BP_CPU_ENABLE BIT(0)
 };
 
 /* ethtool flag for pon0 interface */
@@ -122,19 +125,9 @@ struct ltq_pon_net_tcont {
 	struct list_head node;
 	struct net_device *ndev;
 	struct ltq_pon_net_hw *hw;
-	bool alloc_id_valid;
-	u32 alloc_id;
-	u16 alloc_idx;
-	int queue_id;
+	/** Allocation information */
+	struct alloc_info *info;
 	struct list_head gem_list;
-	/** This value identifies the dequeue port from which the data for
-	 *  for the Allocation ID shall be pulled by hardware.
-	 */
-	u16 qos_idx;
-	/** This link reference identifies a specific linking of an allocation
-	 *  ID to an allocation's hardware index.
-	 */
-	u32 alloc_link_ref;
 	/** Identifies OMCI T-CONT */
 	bool tcont_omci;
 };
@@ -149,14 +142,10 @@ struct ltq_pon_net_gem {
 	struct net_device *dp_ndev;
 	struct ltq_pon_net_hw *hw;
 	struct net *src_net;
-	u16 gem_idx;
-	u32 gem_id;
-	u16 gem_max_size;
-	u8 gem_traffic_type;
-	u8 gem_dir;
-	u8 gem_enc;
-	/* true when GEM port is also configured in the PON FW */
-	bool valid;
+	/* GEM port information */
+	struct gem_port_info *gem_info;
+	/* true when GEM port is OMCI */
+	bool is_omci;
 	/* DP registered */
 	bool dp_connected;
 	/* DP update required */
@@ -166,38 +155,7 @@ struct ltq_pon_net_gem {
 	struct ltq_pon_net_tcont *tcont;
 	struct ltq_pon_net_pmapper *pmapper;
 	struct rtnl_link_stats64 stats;
-	/** This link reference identifies a specific linking of an allocation
-	 *  ID to an allocation's hardware index.
-	 */
-	u32 alloc_link_ref;
 };
-
-/** Maximum number of allocations which are supported by the PON IP hardware */
-#define PON_ALLOC_MAX 64
-
-/** Maximum number of gems which are supported by the PON IP hardware */
-#define PON_GEM_MAX 256
-
-/** Alloc IDX mask.
- *  The lower 8 bit from ALLOC_LINK_REF value are always identical to the
- *  ALLOC_IDX value
- */
-#define ALLOC_IDX_MASK 0xFF
-
-/** This array identifies which QOS Indexes are currently used by
- *  T-CONT netdevices.
- */
-static bool g_qos_idx_used[PON_ALLOC_MAX];
-
-/** This array identifies which GEM Indexes are currently used by
- *  GEM netdevices.
- */
-static bool g_gem_idx_used[PON_GEM_MAX];
-
-/** This array is a shadow storage of qos idx per alloc idx.
- *  TODO: Remove in PONRTSYS-9459.
- */
-static u8 g_alloc_idx_to_qos_idx[PON_ALLOC_MAX];
 
 /** This pointer identifies PON netdevice private data used for firmware
  *  event handling.
@@ -211,20 +169,16 @@ static int enhanced_pmapper_gem_remove(bool force_update,
 				       int idx);
 static int enhanced_pmapper_gem_add(bool force_update,
 				    struct ltq_pon_net_pmapper *pmapper,
-				    int idx,
-				    struct ltq_pon_net_gem *gem);
+				    int idx, struct ltq_pon_net_gem *gem);
 static int ltq_pon_net_dp_gem_update(struct ltq_pon_net_gem *gem,
 				     struct net_device *master);
-static void ltq_pon_net_tcont_gems_activate(struct ltq_pon_net_tcont *tcont);
+
+static void alloc_qos_idx_flush(const struct alloc_info *info);
 
 static void ltq_pon_net_ploam_state_event(void *module, const void *msg,
 					  size_t msg_len, u8 seq);
-static void ltq_pon_net_alloc_id_link_event(void *module, const void *msg,
-					    size_t msg_len, u8 seq);
-static void ltq_pon_net_alloc_id_unlink_event(void *module, const void *msg,
-					      size_t msg_len, u8 seq);
 
-static struct ltq_pon_net_pmapper*
+static struct ltq_pon_net_pmapper *
 pmapper_next(struct ltq_pon_net_pmapper *p_mapper, u8 gem_idx);
 
 /* "partial application" functions with force_update parameter to functions:
@@ -268,32 +222,23 @@ static netdev_tx_t ltq_pon_net_mdev_start_xmit(struct sk_buff *skb,
 }
 
 #if IS_ENABLED(CONFIG_QOS_TC)
-#if (KERNEL_VERSION(4, 14, 0) > LINUX_VERSION_CODE)
-static int ltq_pon_net_mdev_setup_tc(struct net_device *hw_ndev, u32 handle,
-				      __be16 protocol, struct tc_to_netdev *tc)
-{
-	return qos_tc_setup(hw_ndev, handle, protocol, tc, 0, 0);
-}
-#else
 static int ltq_pon_net_mdev_setup_tc(struct net_device *hw_ndev,
-				       enum tc_setup_type type,
-				       void *type_data)
+				     enum tc_setup_type type, void *type_data)
 {
 	return qos_tc_setup(hw_ndev, type, type_data, 0, 0);
 }
 #endif
-#endif
 
-#define SFF_8079_ADDR_MODE	92
-#define SFF_8472_IMPLEMENTED	BIT(6)
+#define SFF_8079_ADDR_MODE 92
+#define SFF_8472_IMPLEMENTED BIT(6)
 static int get_module_info(struct net_device *dev,
 			   struct ethtool_modinfo *modinfo)
 {
 	u8 addr_mode = 0;
 	int ret;
 
-	ret = pon_sfp_read(0, SFF_8079_ADDR_MODE,
-			   &addr_mode, sizeof(addr_mode));
+	ret = pon_sfp_read(0, SFF_8079_ADDR_MODE, &addr_mode,
+			   sizeof(addr_mode));
 	if (ret == sizeof(addr_mode) && (addr_mode & SFF_8472_IMPLEMENTED)) {
 		/* We have an SFP which supports a revision of SFF-8472 */
 		modinfo->type = ETH_MODULE_SFF_8472;
@@ -307,8 +252,7 @@ static int get_module_info(struct net_device *dev,
 	return 0;
 }
 
-static int get_module_eeprom(struct net_device *dev,
-			     struct ethtool_eeprom *ee,
+static int get_module_eeprom(struct net_device *dev, struct ethtool_eeprom *ee,
 			     u8 *data)
 {
 	int i = 0;
@@ -361,7 +305,7 @@ static u32 get_mdev_priv_flags(struct net_device *dev)
 static int set_mdev_priv_flags(struct net_device *dev, u32 flags)
 {
 	GSW_return_t ret = 0;
-	GSW_QoS_portCfg_t qosPortCfg = {0, };
+	GSW_QoS_portCfg_t qosPortCfg = { 0 };
 	struct ltq_pon_net_hw *hw = netdev_priv(dev);
 	struct core_ops *gsw_handle = NULL;
 
@@ -370,8 +314,8 @@ static int set_mdev_priv_flags(struct net_device *dev, u32 flags)
 
 	gsw_handle = gsw_get_swcore_ops(0);
 	if (!gsw_handle) {
-		pr_err("%s failed for device: %s - no gsw handle\n",
-		       __func__, dev->name);
+		pr_err("%s failed for device: %s - no gsw handle\n", __func__,
+		       dev->name);
 		return -EINVAL;
 	}
 
@@ -381,11 +325,10 @@ static int set_mdev_priv_flags(struct net_device *dev, u32 flags)
 	else
 		qosPortCfg.eClassMode = GSW_QOS_CLASS_SELECT_NO;
 
-	ret = gsw_handle->gsw_qos_ops.QoS_PortCfgSet(gsw_handle,
-						     &qosPortCfg);
+	ret = gsw_handle->gsw_qos_ops.QoS_PortCfgSet(gsw_handle, &qosPortCfg);
 	if (ret != GSW_statusOk) {
-		pr_err("%s: QoS_PortCfgSet failed for port %d: %d\n",
-		       __func__, qosPortCfg.nPortId, ret);
+		pr_err("%s: QoS_PortCfgSet failed for port %d: %d\n", __func__,
+		       qosPortCfg.nPortId, ret);
 		return ret;
 	}
 	hw->ethtool_flags = flags & ETHTOOL_FLAG_CLASS_SELECT_SPCP_DSCP;
@@ -475,9 +418,11 @@ static void get_mdev_ethtool_stats(struct net_device *netdev,
 		 */
 		count = dp_net_dev_get_ss_stat_strings_count(in_ele->ndev);
 		if (count != stats->n_stats) {
-			netdev_err(netdev, "%s: unexpected number of counters for %s (expected %d, got %d)\n",
-				   __func__, in_ele->ndev->name,
-				   stats->n_stats, count);
+			netdev_err(
+				netdev,
+				"%s: unexpected number of counters for %s (expected %d, got %d)\n",
+				__func__, in_ele->ndev->name, stats->n_stats,
+				count);
 			continue;
 		}
 
@@ -529,7 +474,7 @@ static u32 get_priv_flags(struct net_device *dev)
 static int set_priv_flags(struct net_device *dev, u32 flags)
 {
 	struct ltq_pon_net_common *np = netdev_priv(dev);
-	struct dp_bp_attr bp_conf = {0};
+	struct dp_bp_attr bp_conf = { 0 };
 	int ret = 0;
 
 	bp_conf.dev = dev;
@@ -564,8 +509,7 @@ static void get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 	switch (stringset) {
 	case ETH_SS_PRIV_FLAGS:
 		for (i = 0; i < PRIV_FLAGS_STR_LEN; i++) {
-			memcpy(data, priv_flags_strings[i],
-			       ETH_GSTRING_LEN);
+			memcpy(data, priv_flags_strings[i], ETH_GSTRING_LEN);
 			data += ETH_GSTRING_LEN;
 		}
 		break;
@@ -668,6 +612,7 @@ static netdev_tx_t ltq_pon_net_gem_start_xmit(struct sk_buff *skb,
 					      struct net_device *gem_ndev)
 {
 	struct ltq_pon_net_gem *gem = netdev_priv(gem_ndev);
+	struct gem_port_info *gem_info = gem->gem_info;
 	int32_t ret;
 	uint32_t dp_flags = 0;
 	dp_subif_t dp_subif;
@@ -683,24 +628,25 @@ static netdev_tx_t ltq_pon_net_gem_start_xmit(struct sk_buff *skb,
 	 * We cannot use skb->protocol here, as this is not set for raw sockets,
 	 * which are used for the OMCI communication.
 	 */
-	if (gem->gem_idx == 0 && eth->h_proto != htons(ETH_P_OUI)) {
-		netdev_dbg(gem_ndev, "packet with eth_type 0x%04X dropped\n",
-			   ntohs(eth->h_proto));
-		gem->stats.tx_dropped++;
-		kfree_skb(skb);
-		return NETDEV_TX_OK;
-	}
-
-	/* only do padding on non-OMCI packets */
-	if (gem->gem_idx) {
-		if (skb_put_padto(skb, ETH_ZLEN)) {
+	if (gem->is_omci) {
+		if (eth->h_proto != htons(ETH_P_OUI)) {
+			netdev_dbg(gem_ndev,
+				   "packet with eth_type 0x%04X dropped\n",
+				   ntohs(eth->h_proto));
+			gem->stats.tx_dropped++;
+			kfree_skb(skb);
+			return NETDEV_TX_OK;
+		}
+	} else {
+		/* only do padding on non-OMCI packets */
+		if (eth_skb_pad(skb)) {
 			gem->stats.tx_dropped++;
 			return NETDEV_TX_OK;
 		}
 	}
 
 	dp_subif.port_id = gem->hw->port_id;
-	dp_subif.subif = gem->gem_idx;
+	dp_subif.subif = gem_info->idx;
 
 	ltq_pon_net_set_skd_dw(skb, dp_subif.port_id, dp_subif.subif);
 
@@ -718,35 +664,19 @@ static netdev_tx_t ltq_pon_net_gem_start_xmit(struct sk_buff *skb,
 	return NETDEV_TX_OK;
 }
 
-static int ltq_pon_net_gem_eth_change_mtu(
-			struct net_device *gem_ndev, int new_mtu)
+static int ltq_pon_net_gem_eth_change_mtu(struct net_device *gem_ndev,
+					  int new_mtu)
 {
 	int ret;
 
 	if (new_mtu == gem_ndev->mtu)
 		return 0;
 
-#if (KERNEL_VERSION(4, 10, 0) <= LINUX_VERSION_CODE)
-	if (new_mtu < gem_ndev->min_mtu) {
-		netdev_err(gem_ndev,
-			"%s Invalid MTU %d requested, hw min %d\n",
-			__func__, new_mtu, gem_ndev->min_mtu);
-		return -EINVAL;
-	}
-
-	if (gem_ndev->max_mtu > 0 && new_mtu > gem_ndev->max_mtu) {
-		netdev_err(gem_ndev,
-			"%s Invalid MTU %d requested, hw max %d\n",
-			__func__, new_mtu, gem_ndev->max_mtu);
-		return -EINVAL;
-	}
-#endif
-
 	ret = dp_set_mtu_size(gem_ndev, (u32)new_mtu);
 	if (ret != DP_SUCCESS) {
 		netdev_err(gem_ndev,
-			"%s new_mtu = %d failed (dp_set_mtu_size=%d)\n",
-			__func__, new_mtu, ret);
+			   "%s new_mtu = %d failed (dp_set_mtu_size=%d)\n",
+			   __func__, new_mtu, ret);
 		return -EINVAL;
 	}
 	gem_ndev->mtu = new_mtu;
@@ -754,14 +684,8 @@ static int ltq_pon_net_gem_eth_change_mtu(
 	return 0;
 }
 
-#if (KERNEL_VERSION(4, 11, 0) > LINUX_VERSION_CODE)
-static struct
-rtnl_link_stats64 *ltq_pon_net_gem_get_stats(struct net_device *gem_ndev,
-					     struct rtnl_link_stats64 *storage)
-#else
 static void ltq_pon_net_gem_get_stats(struct net_device *gem_ndev,
 				      struct rtnl_link_stats64 *storage)
-#endif
 {
 #ifndef CONFIG_DPM_DATAPATH_MIB
 	struct ltq_pon_net_gem *gem = netdev_priv(gem_ndev);
@@ -769,12 +693,6 @@ static void ltq_pon_net_gem_get_stats(struct net_device *gem_ndev,
 	*storage = gem->stats;
 #else
 	dp_get_netif_stats(gem_ndev, NULL, storage, 0);
-#endif
-
-#if (KERNEL_VERSION(4, 11, 0) > LINUX_VERSION_CODE)
-	return storage;
-#else
-	return;
 #endif
 }
 
@@ -790,20 +708,11 @@ static int ltq_pon_net_gem_get_iflink(const struct net_device *gem_ndev)
 }
 
 #if IS_ENABLED(CONFIG_QOS_TC)
-#if (KERNEL_VERSION(4, 14, 0) > LINUX_VERSION_CODE)
-static int ltq_pon_net_gem_setup_tc(struct net_device *gem_ndev, u32 handle,
-				      __be16 protocol, struct tc_to_netdev *tc)
-{
-	return qos_tc_setup(gem_ndev, handle, protocol, tc, -1, -1);
-}
-#else
 static int ltq_pon_net_gem_setup_tc(struct net_device *gem_ndev,
-				       enum tc_setup_type type,
-				       void *type_data)
+				    enum tc_setup_type type, void *type_data)
 {
 	return qos_tc_setup(gem_ndev, type, type_data, -1, -1);
 }
-#endif
 #endif
 
 /** The per GEM port net ops. */
@@ -819,10 +728,6 @@ static const struct net_device_ops ltq_pon_net_gem_ops = {
 	.ndo_get_iflink		= ltq_pon_net_gem_get_iflink,
 #if IS_ENABLED(CONFIG_QOS_TC)
 	.ndo_setup_tc		= ltq_pon_net_gem_setup_tc,
-#endif
-#if (KERNEL_VERSION(4, 14, 0) > LINUX_VERSION_CODE) /* removed in 4.14 */
-	.ndo_bridge_setlink	= switchdev_port_bridge_setlink,
-	.ndo_bridge_getlink	= switchdev_port_bridge_getlink,
 #endif
 };
 
@@ -844,26 +749,14 @@ static int ltq_pon_net_tcont_get_iflink(const struct net_device *tcont_ndev)
 }
 
 #if IS_ENABLED(CONFIG_QOS_TC)
-#if (KERNEL_VERSION(4, 14, 0) > LINUX_VERSION_CODE)
-static int ltq_pon_net_tcont_setup_tc(struct net_device *tcont_ndev, u32 handle,
-				      __be16 protocol, struct tc_to_netdev *tc)
-{
-	struct ltq_pon_net_tcont *tcont = netdev_priv(tcont_ndev);
-
-	return qos_tc_setup(tcont_ndev, handle, protocol, tc,
-				tcont->hw->port_id, tcont->qos_idx);
-}
-#else
 static int ltq_pon_net_tcont_setup_tc(struct net_device *tcont_ndev,
-				       enum tc_setup_type type,
-				       void *type_data)
+				      enum tc_setup_type type, void *type_data)
 {
 	struct ltq_pon_net_tcont *tcont = netdev_priv(tcont_ndev);
 
-	return qos_tc_setup(tcont_ndev, type, type_data,
-				tcont->hw->port_id, tcont->qos_idx);
+	return qos_tc_setup(tcont_ndev, type, type_data, tcont->hw->port_id,
+			    tcont->info->qos_idx);
 }
-#endif
 #endif
 
 /** The per T-CONT net ops. */
@@ -892,7 +785,7 @@ static const struct nla_policy pon_net_pon_cfg_nl_policy[IFLA_PON_MAX] = {
 /** Returns the maximum size of a PON device configuration NetLink message. */
 static size_t pon_net_pon_cfg_nl_getsize(const struct net_device *pon_ndev)
 {
-	return nla_total_size(sizeof(u8));	/* IFLA_PON_QUEUE_LOOKUP_MODE */
+	return nla_total_size(sizeof(u8)); /* IFLA_PON_QUEUE_LOOKUP_MODE */
 }
 
 static int pon_net_pon_cfg_validate(struct ltq_pon_net_hw *pon,
@@ -901,8 +794,8 @@ static int pon_net_pon_cfg_validate(struct ltq_pon_net_hw *pon,
 	u8 queue_lookup_mode = QUEUE_LOOKUP_MODE_SUBIF_ID;
 
 	if (data[IFLA_PON_QUEUE_LOOKUP_MODE])
-		queue_lookup_mode
-			= nla_get_u8(data[IFLA_PON_QUEUE_LOOKUP_MODE]);
+		queue_lookup_mode =
+			nla_get_u8(data[IFLA_PON_QUEUE_LOOKUP_MODE]);
 
 	if (queue_lookup_mode != QUEUE_LOOKUP_MODE_SUBIF_ID &&
 	    queue_lookup_mode != QUEUE_LOOKUP_MODE_SUBIF_ID_TC_4BIT &&
@@ -929,16 +822,10 @@ static int pon_net_pon_cfg_fill_info(struct sk_buff *skb,
 	return 0;
 }
 
-#if (KERNEL_VERSION(4, 13, 0) > LINUX_VERSION_CODE)
-static int pon_net_pon_cfg_changelink(struct net_device *pon_ndev,
-				      struct nlattr *tb[],
-				      struct nlattr *data[])
-#else
 static int pon_net_pon_cfg_changelink(struct net_device *pon_ndev,
 				      struct nlattr *tb[],
 				      struct nlattr *data[],
 				      struct netlink_ext_ack *extack)
-#endif
 {
 	struct ltq_pon_net_hw *pon = netdev_priv(pon_ndev);
 	int err;
@@ -955,8 +842,8 @@ static int pon_net_pon_cfg_changelink(struct net_device *pon_ndev,
 	if (err)
 		return err;
 
-	err = dp_lookup_mode_cfg(pon->dev->id, pon->queue_lookup_mode,
-				 &q_map, DP_CQM_LU_MODE_SET);
+	err = dp_lookup_mode_cfg(pon->dev->id, pon->queue_lookup_mode, &q_map,
+				 DP_CQM_LU_MODE_SET);
 	if (err != DP_SUCCESS)
 		return -EIO;
 
@@ -994,8 +881,7 @@ static int ltq_pon_net_pmapper_open(struct net_device *pmapper_ndev)
 		if (!gem)
 			continue;
 
-		err = dp_rx_enable(gem->ndev, pmapper_ndev->name,
-				   DP_RX_ENABLE);
+		err = dp_rx_enable(gem->ndev, pmapper_ndev->name, DP_RX_ENABLE);
 		if (err != DP_SUCCESS) {
 			netdev_err(gem->ndev, "dp_rx_enable failed\n");
 			return -EIO;
@@ -1039,8 +925,7 @@ static int ltq_pon_net_pmapper_stop(struct net_device *pmapper_ndev)
  */
 static void transfer_gem(struct ltq_pon_net_pmapper *src,
 			 struct ltq_pon_net_pmapper *dst,
-			 struct ltq_pon_net_gem *gem,
-			 int pcp)
+			 struct ltq_pon_net_gem *gem, int pcp)
 {
 	/* Remove shared gem from selected pcp slot of src p-mapper. Call to
 	 * ltq_pon_net_dp_gem_update is forced by use of the ext variant of
@@ -1093,17 +978,14 @@ static void ltq_pon_net_pmapper_uninit(struct net_device *pmapper_ndev)
 			/* Find next pmapper if any which references the
 			 * same gem idx.
 			 */
-			next_pmapper = pmapper_next(pmapper,
-						    gem->gem_idx);
+			next_pmapper =
+				pmapper_next(pmapper, gem->gem_info->idx);
 			if (next_pmapper) {
 				/* This gem_idx is shared across several
 				 * p-mapperS (since next_pmapper is NOT
 				 * a NULL pointer!).
 				 */
-				transfer_gem(pmapper,
-					     next_pmapper,
-					     gem,
-					     pcp);
+				transfer_gem(pmapper, next_pmapper, gem, pcp);
 			} else {
 				/* only this p-mapper references the gem. gem
 				 * is NOT shared! Both variants of the remove
@@ -1117,16 +999,14 @@ static void ltq_pon_net_pmapper_uninit(struct net_device *pmapper_ndev)
 				 * will call to ltq_pon_net_dp_gem_update only
 				 * when a single PCP slot references it.
 				 */
-				pmapper_gem_remove(pmapper,
-						   pcp);
+				pmapper_gem_remove(pmapper, pcp);
 			}
 		} else {
 			/* the p-mapper is not gem's master from DPM's
 			 * point of view, but it has to be removed from
 			 * p-mapper's PCP slots.
 			 */
-			pmapper_gem_remove(pmapper,
-					   pcp);
+			pmapper_gem_remove(pmapper, pcp);
 		}
 	}
 	/* Remove the IEEE 802.1p mapper from the PON IP hardware interface. */
@@ -1262,24 +1142,8 @@ ltq_pon_net_pmapper_start_xmit(struct sk_buff *skb,
 	return NETDEV_TX_OK;
 }
 
-#if (KERNEL_VERSION(4, 11, 0) > LINUX_VERSION_CODE)
-static struct rtnl_link_stats64 *
-ltq_pon_net_pmapper_get_stats(struct net_device *pmapper_ndev,
-			      struct rtnl_link_stats64 *storage)
-{
-#ifndef CONFIG_DPM_DATAPATH_MIB
-	struct ltq_pon_net_pmapper *pmapper = netdev_priv(pmapper_ndev);
-
-	*storage = pmapper->stats;
-#else
-	dp_get_netif_stats(pmapper_ndev, NULL, storage, 0);
-#endif
-	return storage;
-}
-#else
-static void
-ltq_pon_net_pmapper_get_stats(struct net_device *pmapper_ndev,
-			      struct rtnl_link_stats64 *storage)
+static void ltq_pon_net_pmapper_get_stats(struct net_device *pmapper_ndev,
+					  struct rtnl_link_stats64 *storage)
 {
 #ifndef CONFIG_DPM_DATAPATH_MIB
 	struct ltq_pon_net_pmapper *pmapper = netdev_priv(pmapper_ndev);
@@ -1289,12 +1153,11 @@ ltq_pon_net_pmapper_get_stats(struct net_device *pmapper_ndev,
 	dp_get_netif_stats(pmapper_ndev, NULL, storage, 0);
 #endif
 }
-#endif
 
 /** Receives one package, this is called by the datapath library. */
 static int32_t ltq_pon_net_dp_rx(struct net_device *ndev,
-				 struct net_device *txif,
-				 struct sk_buff *skb, int32_t len)
+				 struct net_device *txif, struct sk_buff *skb,
+				 int32_t len)
 {
 	struct rtnl_link_stats64 *stats;
 	struct ltq_pon_net_hw *hw = NULL;
@@ -1369,13 +1232,14 @@ int ltq_pon_net_gem_get(struct sk_buff *skb)
 	struct dma_rx_desc_1 *desc_1 = (struct dma_rx_desc_1 *)&skb->DW1;
 
 	pmapper_ndev = skb->dev;
-	if (pmapper_ndev == NULL) {
+	if (!pmapper_ndev) {
 		pr_err("Missing pmapper_ndev!\n");
 		return -ENODEV;
 	}
 	/* Check if this is really a pmapper from this driver */
 	if (pmapper_ndev->netdev_ops->ndo_open != ltq_pon_net_pmapper_open) {
-		netdev_err(pmapper_ndev, "Invalid ndo_open! Not ltq_pon_net_pmapper_open!\n");
+		netdev_err(pmapper_ndev,
+			   "Invalid ndo_open! Not ltq_pon_net_pmapper_open!\n");
 		return -ENXIO;
 	}
 
@@ -1424,13 +1288,9 @@ static const struct net_device_ops ltq_pon_net_pmapper_ops = {
 	.ndo_start_xmit		= ltq_pon_net_pmapper_start_xmit,
 	.ndo_set_mac_address	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
-	 /* TODO: switch config needs changes to activate jumbo frames */
+	/* TODO: switch config needs changes to activate jumbo frames */
 	.ndo_get_stats64	= ltq_pon_net_pmapper_get_stats,
 	.ndo_get_iflink		= ltq_pon_net_pmapper_get_iflink,
-#if (KERNEL_VERSION(4, 14, 0) > LINUX_VERSION_CODE) /* removed in 4.14 */
-	.ndo_bridge_setlink	= switchdev_port_bridge_setlink,
-	.ndo_bridge_getlink	= switchdev_port_bridge_getlink,
-#endif
 #if IS_ENABLED(CONFIG_QOS_TC)
 	.ndo_setup_tc		= ltq_pon_net_gem_setup_tc,
 #endif
@@ -1445,9 +1305,9 @@ dp_cb_t ltq_pon_net_dp_cb = {
  */
 static int ltq_pon_dp_gpon_register(struct ltq_pon_net_hw *hw)
 {
-	struct dp_port_data port_data = {0,};
+	struct dp_port_data port_data = { 0 };
 	struct module *owner = hw->dev->driver->owner;
-	struct dp_dev_data dp_data = {0};
+	struct dp_dev_data dp_data = { 0 };
 	u32 flags = DP_F_GPON;
 	int32_t err;
 
@@ -1467,7 +1327,8 @@ static int ltq_pon_dp_gpon_register(struct ltq_pon_net_hw *hw)
 	hw->port_id = dp_alloc_port_ext(hw->dev->id, owner, NULL, hw->dev_id,
 					hw->dev_id, NULL, &port_data, flags);
 
-	dev_dbg(hw->dev, "dp_alloc_port_ext(inst: %i, dev_port: %i, num_resv_q: %i, num_resv_sched: %i): %i\n",
+	dev_dbg(hw->dev,
+		"dp_alloc_port_ext(inst: %i, dev_port: %i, num_resv_q: %i, num_resv_sched: %i): %i\n",
 		hw->dev->id, hw->dev_id, port_data.num_resv_q,
 		port_data.num_resv_sched, hw->port_id);
 
@@ -1675,10 +1536,8 @@ static int ltq_pon_net_probe(struct platform_device *pdev)
 
 	pon_mbox_register_event_handler(PONFW_PLOAM_STATE_CMD_ID,
 					ltq_pon_net_ploam_state_event, hw);
-	pon_mbox_register_event_handler(PONFW_ALLOC_ID_LINK_CMD_ID,
-					ltq_pon_net_alloc_id_link_event, hw);
-	pon_mbox_register_event_handler(PONFW_ALLOC_ID_UNLINK_CMD_ID,
-					ltq_pon_net_alloc_id_unlink_event, hw);
+
+	alloc_init(alloc_qos_idx_flush);
 
 	/*
 	 * Retrieve the current PON mode. At boot, this is likely
@@ -1723,16 +1582,20 @@ static int ltq_pon_net_remove(struct platform_device *pdev)
 
 	pon_mbox_unregister_event_handler_module(hw);
 
+	alloc_uninit();
+
 	ltq_pon_iphost_port_deregister(hw);
 
 	unregister_netdev(hw->ndev);
 	dp_register_dev_ext(dev->id, owner, hw->port_id, &ltq_pon_net_dp_cb,
 			    NULL, DP_F_DEREGISTER);
-	dev_dbg(dev, "dp_register_dev_ext(inst: %i, port_id: %i, DP_F_DEREGISTER)\n",
+	dev_dbg(dev,
+		"dp_register_dev_ext(inst: %i, port_id: %i, DP_F_DEREGISTER)\n",
 		dev->id, hw->port_id);
 	dp_alloc_port_ext(dev->id, owner, NULL, hw->port_id, hw->port_id, NULL,
 			  NULL, DP_F_DEREGISTER);
-	dev_dbg(dev, "dp_alloc_port_ext(inst: %i, dev_port: %i, DP_F_DEREGISTER)\n",
+	dev_dbg(dev,
+		"dp_alloc_port_ext(inst: %i, dev_port: %i, DP_F_DEREGISTER)\n",
 		dev->id, hw->port_id);
 	free_netdev(hw->ndev);
 
@@ -1776,22 +1639,22 @@ ltq_pon_net_gem_nl_policy[IFLA_PON_GEM_MAX] = {
 /** Returns the maximum size of a GEM port configuration NetLink message. */
 static size_t ltq_pon_net_gem_nl_getsize(const struct net_device *gem_ndev)
 {
-	return nla_total_size(sizeof(u16)) +	/* IFLA_PON_GEM_IDX */
-	       nla_total_size(sizeof(u32)) +	/* IFLA_PON_GEM_ID */
-	       nla_total_size(sizeof(u32)) +	/* IFLA_PON_GEM_TCONT */
-	       nla_total_size(sizeof(u16)) +	/* IFLA_PON_GEM_MAX_SIZE */
-	       nla_total_size(sizeof(u8)) +	/* IFLA_PON_GEM_TRAFFIC_TYPE */
-	       nla_total_size(sizeof(u8)) +	/* IFLA_PON_GEM_DIR */
-	       nla_total_size(sizeof(u8)) +	/* IFLA_PON_GEM_ENC */
-	       nla_total_size(sizeof(u8)) +	/* IFLA_PON_GEM_MC */
-	       nla_total_size(sizeof(u16)) +	/* IFLA_PON_GEM_BP */
-	       nla_total_size(sizeof(u32));	/* IFLA_PON_GEM_CTP */
+	return nla_total_size(sizeof(u16)) + /* IFLA_PON_GEM_IDX */
+	       nla_total_size(sizeof(u32)) + /* IFLA_PON_GEM_ID */
+	       nla_total_size(sizeof(u32)) + /* IFLA_PON_GEM_TCONT */
+	       nla_total_size(sizeof(u16)) + /* IFLA_PON_GEM_MAX_SIZE */
+	       nla_total_size(sizeof(u8)) + /* IFLA_PON_GEM_TRAFFIC_TYPE */
+	       nla_total_size(sizeof(u8)) + /* IFLA_PON_GEM_DIR */
+	       nla_total_size(sizeof(u8)) + /* IFLA_PON_GEM_ENC */
+	       nla_total_size(sizeof(u8)) + /* IFLA_PON_GEM_MC */
+	       nla_total_size(sizeof(u16)) + /* IFLA_PON_GEM_BP */
+	       nla_total_size(sizeof(u32)); /* IFLA_PON_GEM_CTP */
 }
 
 #if IS_ENABLED(CONFIG_QOS_TC)
 static int ltq_pon_get_qid(int tcont_idx, int port_id, int *q_id)
 {
-	struct dp_dequeue_res deq = {0};
+	struct dp_dequeue_res deq = { 0 };
 	static struct dp_queue_res q_res[8];
 	int ret;
 
@@ -1816,20 +1679,21 @@ static int ltq_pon_get_qid(int tcont_idx, int port_id, int *q_id)
 
 static uint8_t ltq_pon_net_dp_domain_get(struct ltq_pon_net_gem *gem)
 {
+	struct gem_port_info *gem_info = gem->gem_info;
+
 	if (gem->multicast) {
 		netdev_dbg(gem->ndev, "GEM Multicast domain: %d\n",
 			   DP_BR_DM_MC);
 		return DP_BR_DM_MC;
 	}
 
-	if (gem->gem_dir == PONFW_GEM_PORT_ID_DIR_DS) {
+	if (gem_info->dir == PONFW_GEM_PORT_ID_DIR_DS) {
 		netdev_dbg(gem->ndev, "GEM Broadcast domain: %d\n",
 			   DP_BR_DM_BC1);
 		return DP_BR_DM_BC1;
 	}
 
-	netdev_dbg(gem->ndev, "GEM Unicast domain: %d\n",
-		   DP_BR_DM_UCA);
+	netdev_dbg(gem->ndev, "GEM Unicast domain: %d\n", DP_BR_DM_UCA);
 	return DP_BR_DM_UCA;
 }
 
@@ -1916,15 +1780,16 @@ static int omci_rx_queue_del(struct ltq_pon_net_gem *gem)
 static int ltq_pon_net_gem_connect(struct ltq_pon_net_gem *gem,
 				   struct net_device *ndev)
 {
+	struct gem_port_info *gem_info = gem->gem_info;
 	struct net_device *gem_ndev = gem->ndev;
 	struct device *dev = gem->hw->dev;
 	struct module *owner = dev->driver->owner;
 	struct ltq_pon_net_tcont *tcont = gem->tcont;
-	struct dp_subif_data data = {0,};
-	dp_subif_t dp_subif = {0,};
+	struct dp_subif_data data = { 0 };
+	dp_subif_t dp_subif = { 0 };
 	int32_t ret;
 
-	dp_subif.subif = gem->gem_idx;
+	dp_subif.subif = gem_info->idx;
 	dp_subif.port_id = gem->hw->port_id;
 	/* Register the netdevs with learning disable as it conflicts with
 	 * the VLAN flow forwarding. If enabled there is a time slot during
@@ -1937,13 +1802,14 @@ static int ltq_pon_net_gem_connect(struct ltq_pon_net_gem *gem,
 #if IS_ENABLED(CONFIG_QOS_TC)
 		int qid = 0;
 
-		ret = ltq_pon_get_qid(tcont->qos_idx, dp_subif.port_id, &qid);
+		ret = ltq_pon_get_qid(tcont->info->qos_idx, dp_subif.port_id,
+				      &qid);
 		if (!ret && qid > 0) {
 			data.flag_ops |= DP_SUBIF_SPECIFIC_Q;
 			data.q_id = qid;
 		}
 #endif
-		data.deq_port_idx = tcont->qos_idx;
+		data.deq_port_idx = tcont->info->qos_idx;
 	} else {
 		ndev->priv_flags |= IFF_NO_QUEUE;
 	}
@@ -1962,7 +1828,6 @@ static int ltq_pon_net_gem_connect(struct ltq_pon_net_gem *gem,
 	if (!(gem->common.ethtool_flags & ETHTOOL_FLAG_BP_CPU_ENABLE))
 		data.flag_ops |= DP_SUBIF_BP_CPU_DISABLE;
 
-#if (KERNEL_VERSION(4, 9, 51) <= LINUX_VERSION_CODE)
 	/* When we remove a sub interface, all the bridge associations are also
 	 * removed by the datapath library, when we add it again the net device
 	 * is still in the bridge, but the datapath library does not know about
@@ -1971,28 +1836,28 @@ static int ltq_pon_net_gem_connect(struct ltq_pon_net_gem *gem,
 	 * problem.
 	 */
 	if (netdev_has_any_upper_dev(ndev))
-		netdev_warn(ndev, "Do not change interface inside of bridge, this will break HW forwarding!");
-#endif /* kernel <= 4.9.51 */
+		netdev_warn(
+			ndev,
+			"Do not change interface inside of bridge, this will break HW forwarding!");
 
 	ltq_pon_net_dp_domain_reg(gem, &dp_subif, &data);
 
-	dev_dbg(dev, "dp_register_subif_ext(inst: %i, ndev: %s, subif: %i, port_id: %i, deq_port_idx: %i, data.ctp_dev: %s)\n",
+	dev_dbg(dev,
+		"dp_register_subif_ext(inst: %i, ndev: %s, subif: %i, port_id: %i, deq_port_idx: %i, data.ctp_dev: %s)\n",
 		dev->id, ndev->name, dp_subif.subif, dp_subif.port_id,
 		data.deq_port_idx, data.ctp_dev ? data.ctp_dev->name : NULL);
-	ret = dp_register_subif_ext(dev->id, owner, ndev, ndev->name,
-				    &dp_subif, &data, 0);
+	ret = dp_register_subif_ext(dev->id, owner, ndev, ndev->name, &dp_subif,
+				    &data, 0);
 	if (ret != DP_SUCCESS) {
 		netdev_err(gem_ndev, "dp_register_subif_ext failed: %d\n", ret);
 		return -EIO;
 	}
 	netdev_dbg(gem_ndev, "dp_register_subif_ext success\n");
-	if (tcont)
-		tcont->queue_id = data.q_id;
 
 	gem->dp_ndev = ndev;
 	gem->dp_connected = true;
 
-	if (gem->gem_traffic_type == PONFW_GEM_PORT_ID_TT_OMCI)
+	if (gem->is_omci)
 		omci_rx_queue_add(gem);
 
 	return 0;
@@ -2002,11 +1867,12 @@ static int ltq_pon_net_gem_connect(struct ltq_pon_net_gem *gem,
 static int ltq_pon_net_gem_disconnect(struct ltq_pon_net_gem *gem,
 				      struct ltq_pon_net_tcont *tcont)
 {
+	struct gem_port_info *gem_info = gem->gem_info;
 	struct net_device *gem_ndev = gem->ndev;
 	struct device *dev = gem->hw->dev;
 	struct module *owner = dev->driver->owner;
-	dp_subif_t dp_subif = {0,};
-	struct dp_subif_data data = {0,};
+	dp_subif_t dp_subif = { 0 };
+	struct dp_subif_data data = { 0 };
 	int32_t ret;
 
 	if (!gem->dp_connected)
@@ -2014,7 +1880,16 @@ static int ltq_pon_net_gem_disconnect(struct ltq_pon_net_gem *gem,
 
 	dev_close(gem_ndev);
 
-	dp_subif.subif = gem->gem_idx;
+	netdev_dbg(gem_ndev,
+		   "Disconnecting GEM port %s from datapath library\n",
+		   gem_ndev->name);
+
+	if (!gem_info) {
+		netdev_err(gem_ndev, "gem_info is NULL\n");
+		return -EINVAL;
+	}
+
+	dp_subif.subif = gem_info->idx;
 	dp_subif.port_id = gem->hw->port_id;
 	data.mac_learn_disable = DP_MAC_LEARNING_DIS;
 
@@ -2022,13 +1897,14 @@ static int ltq_pon_net_gem_disconnect(struct ltq_pon_net_gem *gem,
 #if IS_ENABLED(CONFIG_QOS_TC)
 		int qid = 0;
 
-		ret = ltq_pon_get_qid(tcont->qos_idx, dp_subif.port_id, &qid);
+		ret = ltq_pon_get_qid(tcont->info->qos_idx, dp_subif.port_id,
+				      &qid);
 		if (!ret && qid > 0) {
 			data.flag_ops |= DP_SUBIF_SPECIFIC_Q;
 			data.q_id = qid;
 		}
 #endif
-		data.deq_port_idx = tcont->qos_idx;
+		data.deq_port_idx = tcont->info->qos_idx;
 	}
 
 	if (gem_ndev != gem->dp_ndev)
@@ -2037,7 +1913,8 @@ static int ltq_pon_net_gem_disconnect(struct ltq_pon_net_gem *gem,
 	ret = dp_register_subif_ext(dev->id, owner, gem->dp_ndev,
 				    gem->dp_ndev->name, &dp_subif, &data,
 				    DP_F_DEREGISTER);
-	dev_dbg(dev, "dp_register_subif_ext(inst: %i, ndev: %s, subif: %i, port_id: %i, deq_port_idx: %i, data.ctp_dev: %s, DP_F_DEREGISTER): %i\n",
+	dev_dbg(dev,
+		"dp_register_subif_ext(inst: %i, ndev: %s, subif: %i, port_id: %i, deq_port_idx: %i, data.ctp_dev: %s, DP_F_DEREGISTER): %i\n",
 		dev->id, gem->dp_ndev->name, dp_subif.subif, dp_subif.port_id,
 		data.deq_port_idx, data.ctp_dev ? data.ctp_dev->name : NULL,
 		ret);
@@ -2047,162 +1924,11 @@ static int ltq_pon_net_gem_disconnect(struct ltq_pon_net_gem *gem,
 		return -EIO;
 	}
 
-	if (tcont && list_empty(&tcont->gem_list))
-		tcont->queue_id = PON_ETH_QUEUE_UNASSIGNED;
-
 	gem->dp_ndev = NULL;
 	gem->dp_connected = false;
 
-	if (gem->gem_traffic_type == PONFW_GEM_PORT_ID_TT_OMCI)
+	if (gem->is_omci)
 		omci_rx_queue_del(gem);
-
-	return 0;
-}
-
-static int ltq_pon_net_tcont_omci_fw_get(struct ltq_pon_net_tcont *tcont,
-					 uint32_t *alloc_id,
-					 uint32_t *alloc_link_ref)
-{
-	struct ponfw_alloc_idx fw_alloc_input = {0};
-	struct ponfw_alloc_idx fw_alloc_output = {0};
-	int err;
-
-	fw_alloc_input.alloc_idx = tcont->alloc_idx;
-
-	err = pon_mbox_send(PONFW_ALLOC_IDX_CMD_ID, PONFW_READ,
-			    &fw_alloc_input, PONFW_ALLOC_IDX_LENR,
-			    &fw_alloc_output,
-			    sizeof(fw_alloc_output));
-	if (err < 0) {
-		netdev_err(tcont->ndev,
-			   "failed to read Allocation Index (%u): %i\n",
-			   tcont->alloc_idx, err);
-		return err;
-	}
-
-	if (err != sizeof(fw_alloc_output)) {
-		err = -EINVAL;
-		netdev_err(tcont->ndev,
-			   "failed to get answer for Allocation Index read (%u): %i\n",
-			   tcont->alloc_idx, err);
-		return err;
-	}
-
-	/* We should not store this information for local management,
-	 * because it is done by firmware.
-	 */
-	*alloc_id = fw_alloc_output.alloc_id;
-	*alloc_link_ref = fw_alloc_output.alloc_link_ref;
-
-	return 0;
-}
-
-static u16 ltq_pon_net_gem_idx_preassign(struct ltq_pon_net_gem *gem)
-{
-	u16 i;
-
-	if (gem->gem_idx)
-		return 0;
-
-	/* GEM Index 0 is used by OMCI channel, so skip it */
-	for (i = 1; i < ARRAY_SIZE(g_gem_idx_used); i++) {
-		if (g_gem_idx_used[i])
-			continue;
-
-		g_gem_idx_used[i] = true;
-		gem->gem_idx = i;
-		netdev_dbg(gem->ndev,
-			   "GEM Index (%u) pre-assigned for GEM id (%u)\n",
-			   gem->gem_idx, gem->gem_id);
-		return 0;
-	}
-
-	netdev_err(gem->ndev,
-		   "failed to pre-assign GEM Index for GEM id (%u)\n",
-		   gem->gem_id);
-
-	return -ENODATA;
-}
-
-static int ltq_pon_net_gem_fw_apply(struct ltq_pon_net_gem *gem,
-				    struct ltq_pon_net_tcont *tcont)
-{
-	struct ponfw_gem_port_id fw_gem_input = {0};
-	uint32_t alloc_id, alloc_link_ref;
-	int err;
-
-	if (gem->gem_traffic_type == PONFW_GEM_PORT_ID_TT_OMCI)
-		return 0;
-
-	/* Warmstart: if system is not in operational state we can only
-	 * pretend to configure GEM with pre-assigned index.
-	 */
-	if (!atomic_read(&g_hw->in_o5)) {
-		err = ltq_pon_net_gem_idx_preassign(gem);
-		return err;
-	}
-
-	fw_gem_input.gem_port_id = gem->gem_id;
-
-	if (tcont && tcont->alloc_link_ref) {
-		fw_gem_input.alloc_id = tcont->alloc_id;
-		fw_gem_input.alloc_link_ref = tcont->alloc_link_ref;
-		fw_gem_input.dir = gem->gem_dir;
-	} else if (tcont && tcont->tcont_omci) {
-		err = ltq_pon_net_tcont_omci_fw_get(tcont,
-				&alloc_id,
-				&alloc_link_ref);
-		if (err)
-			return err;
-		fw_gem_input.alloc_id = alloc_id;
-		fw_gem_input.alloc_link_ref = alloc_link_ref;
-		fw_gem_input.dir = gem->gem_dir;
-	} else {
-		fw_gem_input.dir = PONFW_GEM_PORT_ID_DIR_DS;
-	}
-	fw_gem_input.max_gem_size = gem->gem_max_size;
-	fw_gem_input.tt = gem->gem_traffic_type;
-	fw_gem_input.enc = gem->gem_enc;
-
-	/* Warmstart: If the GEM port was not removed while leaving the
-	 * operational state, we need to configure it to the same
-	 * GEM port index value as before.
-	 */
-	if (gem->gem_idx) {
-		fw_gem_input.use_idx = PONFW_GEM_PORT_ID_USE_IDX_EN;
-		fw_gem_input.gem_port_idx = gem->gem_idx;
-	}
-
-	err = pon_mbox_send(PONFW_GEM_PORT_ID_CMD_ID, PONFW_WRITE,
-			    &fw_gem_input, PONFW_GEM_PORT_ID_LENW,
-			    NULL, 0);
-	if (err < 0) {
-		/* When the T-Cont and the GEM port are configured over OMCI
-		 * before they are configured over PLOAM or the SW did not get
-		 * the information about this over the mailbox yet, this
-		 * message will return an error. This is no problem because we
-		 * will get the LINK event from the PON FW later and then
-		 * link them again.
-		 */
-		if (tcont && tcont->alloc_link_ref) {
-			netdev_dbg(gem->ndev,
-				   "failed to map GEM id (%u) for Alloc id (%i): %i, ignore this as Alloc ID is probably not yet configured over PLOAM\n",
-				   gem->gem_id, tcont ? tcont->alloc_id : -1,
-				   err);
-			return 0;
-		}
-		netdev_err(gem->ndev,
-			   "failed to map GEM id (%u) for Alloc id (%i): %i\n",
-			   gem->gem_id, tcont ? tcont->alloc_id : -1, err);
-		return err;
-	}
-
-	if (tcont && tcont->alloc_link_ref) {
-		gem->alloc_link_ref = tcont->alloc_link_ref;
-		netdev_dbg(gem->ndev,
-			   "mapped GEM id (%u) for Alloc id (%i) with Version number (0x%x)\n",
-			   gem->gem_id, tcont->alloc_id, gem->alloc_link_ref);
-	}
 
 	return 0;
 }
@@ -2212,10 +1938,9 @@ static int ltq_pon_net_pmapper_gem_count(struct ltq_pon_net_pmapper *pmapper)
 	int i;
 	int count = 0;
 
-	for (i = 0; i < DP_PMAP_PCP_NUM; i++) {
+	for (i = 0; i < DP_PMAP_PCP_NUM; i++)
 		if (pmapper->gem[i])
 			count++;
-	}
 
 	return count;
 }
@@ -2225,21 +1950,24 @@ static int ltq_pon_net_pmapper_gem_count(struct ltq_pon_net_pmapper *pmapper)
  */
 static int ltq_pon_net_pmapper_set_mapping(struct ltq_pon_net_pmapper *pmapper)
 {
-	struct dp_pmapper pmap = {0,};
+	struct dp_pmapper pmap = { 0 };
+	struct ltq_pon_net_gem *gem;
 	int i;
 	bool set_pmapper = false;
 	int err = 0;
 
 	pmap.mode = pmapper->mode;
-	if (pmapper->gem[pmapper->pcpdef])
-		pmap.def_ctp = pmapper->gem[pmapper->pcpdef]->gem_idx;
+	gem = pmapper->gem[pmapper->pcpdef];
+	if (gem)
+		pmap.def_ctp = gem->gem_info->idx;
 	else
 		pmap.def_ctp = DP_PMAPPER_DISCARD_CTP;
 
 	for (i = 0; i < DP_PMAP_PCP_NUM; i++) {
-		if (pmapper->gem[i]) {
-			if (pmap.pcp_map[i] != pmapper->gem[i]->gem_idx) {
-				pmap.pcp_map[i] = pmapper->gem[i]->gem_idx;
+		gem = pmapper->gem[i];
+		if (gem) {
+			if (pmap.pcp_map[i] != gem->gem_info->idx) {
+				pmap.pcp_map[i] = gem->gem_info->idx;
 				set_pmapper = true;
 			}
 		} else {
@@ -2252,7 +1980,6 @@ static int ltq_pon_net_pmapper_set_mapping(struct ltq_pon_net_pmapper *pmapper)
 
 	for (i = 0; i < DP_PMAP_DSCP_NUM; i++) {
 		u8 pcp_idx = pmapper->dscp_map[i];
-		struct ltq_pon_net_gem *gem;
 
 		if (pcp_idx == PON_PMAPPER_DSCP_DEFAULT) {
 			pmap.dscp_map[i] = pmap.def_ctp;
@@ -2265,8 +1992,8 @@ static int ltq_pon_net_pmapper_set_mapping(struct ltq_pon_net_pmapper *pmapper)
 		if (!gem && pmap.dscp_map[i] != DP_PMAPPER_DISCARD_CTP) {
 			pmap.dscp_map[i] = DP_PMAPPER_DISCARD_CTP;
 			set_pmapper = true;
-		} else if (gem && pmap.dscp_map[i] != gem->gem_idx) {
-			pmap.dscp_map[i] = gem->gem_idx;
+		} else if (gem && pmap.dscp_map[i] != gem->gem_info->idx) {
+			pmap.dscp_map[i] = gem->gem_info->idx;
 			set_pmapper = true;
 		}
 	}
@@ -2274,13 +2001,12 @@ static int ltq_pon_net_pmapper_set_mapping(struct ltq_pon_net_pmapper *pmapper)
 	/* Only call dp_set_pmapper() if we have at least one GEM port */
 	if (set_pmapper && ltq_pon_net_pmapper_gem_count(pmapper) >= 1) {
 		err = dp_set_pmapper(pmapper->ndev, &pmap, 0);
-		netdev_dbg(pmapper->ndev,
+		netdev_dbg(
+			pmapper->ndev,
 			"dp_set_pmapper: def_ctp: %i, pcp: [%i, %i, %i, %i, %i, %i, %i, %i] : %i\n",
-			pmap.def_ctp,
-			pmap.pcp_map[0], pmap.pcp_map[1],
-			pmap.pcp_map[2], pmap.pcp_map[3],
-			pmap.pcp_map[4], pmap.pcp_map[5],
-			pmap.pcp_map[6], pmap.pcp_map[7], err);
+			pmap.def_ctp, pmap.pcp_map[0], pmap.pcp_map[1],
+			pmap.pcp_map[2], pmap.pcp_map[3], pmap.pcp_map[4],
+			pmap.pcp_map[5], pmap.pcp_map[6], pmap.pcp_map[7], err);
 		if (err != DP_SUCCESS)
 			netdev_err(pmapper->ndev, "dp_set_pmapper failed\n");
 	}
@@ -2292,26 +2018,32 @@ static int ltq_pon_net_gem_fill_info(struct sk_buff *skb,
 				     const struct net_device *gem_ndev)
 {
 	struct ltq_pon_net_gem *gem = netdev_priv(gem_ndev);
+	struct gem_port_info *gem_info = gem->gem_info;
 	struct ltq_pon_net_tcont *tcont = gem->tcont;
 	dp_subif_t dp_subif;
 	int ret;
 
-	if (nla_put_u16(skb, IFLA_PON_GEM_IDX, gem->gem_idx))
+	if (!gem_info) {
+		netdev_err(gem->ndev, "GEM port info not found\n");
+		return -ENODEV;
+	}
+
+	if (nla_put_u16(skb, IFLA_PON_GEM_IDX, gem_info->idx))
 		return -ENOBUFS;
 
-	if (nla_put_u32(skb, IFLA_PON_GEM_ID, gem->gem_id))
+	if (nla_put_u32(skb, IFLA_PON_GEM_ID, gem_info->id))
 		return -ENOBUFS;
 
-	if (nla_put_u16(skb, IFLA_PON_GEM_MAX_SIZE, gem->gem_max_size))
+	if (nla_put_u16(skb, IFLA_PON_GEM_MAX_SIZE, gem_info->max_size))
 		return -ENOBUFS;
 
-	if (nla_put_u8(skb, IFLA_PON_GEM_TRAFFIC_TYPE, gem->gem_traffic_type))
+	if (nla_put_u8(skb, IFLA_PON_GEM_TRAFFIC_TYPE, gem_info->traffic_type))
 		return -ENOBUFS;
 
-	if (nla_put_u8(skb, IFLA_PON_GEM_DIR, gem->gem_dir))
+	if (nla_put_u8(skb, IFLA_PON_GEM_DIR, gem_info->dir))
 		return -ENOBUFS;
 
-	if (nla_put_u8(skb, IFLA_PON_GEM_ENC, gem->gem_enc))
+	if (nla_put_u8(skb, IFLA_PON_GEM_ENC, gem_info->enc))
 		return -ENOBUFS;
 
 	if (nla_put_u8(skb, IFLA_PON_GEM_MC, gem->multicast))
@@ -2340,6 +2072,20 @@ static int ltq_pon_net_gem_fill_info(struct sk_buff *skb,
 	return 0;
 }
 
+static void gem_destructor(struct net_device *dev)
+{
+	struct ltq_pon_net_gem *gem = netdev_priv(dev);
+
+	netdev_dbg(dev, "Destroying GEM port info\n");
+
+	/* the destructor is called without lock, do it manually */
+	rtnl_lock();
+	/* Free the GEM port info structure */
+	gem_port_info_free(gem->gem_info);
+	gem->gem_info = NULL;
+	rtnl_unlock();
+}
+
 /** This is called to configure the newly created GEM port interface. The
  * interface itself is created by the Linux stack this just does the GEM port
  * specific initial configuration.
@@ -2350,18 +2096,12 @@ static void ltq_pon_net_gem_setup(struct net_device *gem_ndev)
 
 	ether_setup(gem_ndev);
 
-#if (KERNEL_VERSION(4, 10, 0) <= LINUX_VERSION_CODE)
 	gem_ndev->min_mtu = 14;
 	gem_ndev->max_mtu = 9216;
-#endif
-
 	gem_ndev->netdev_ops = &ltq_pon_net_gem_ops;
 	gem_ndev->ethtool_ops = &ethtool_ops;
-#if (KERNEL_VERSION(4, 11, 0) > LINUX_VERSION_CODE)
-	gem_ndev->destructor = free_netdev;
-#else
-	gem_ndev->priv_destructor = free_netdev;
-#endif
+	gem_ndev->priv_destructor = gem_destructor;
+	gem_ndev->needs_free_netdev = true;
 
 	eth_hw_addr_random(gem_ndev);
 
@@ -2374,80 +2114,6 @@ static void ltq_pon_net_gem_setup(struct net_device *gem_ndev)
 
 	INIT_LIST_HEAD(&gem->node);
 	INIT_LIST_HEAD(&gem->tcont_node);
-}
-
-static int ltq_pon_net_gem_port_idx_get(struct ltq_pon_net_gem *gem)
-{
-	struct ponfw_gem_port_id fw_gem_input = {0};
-	struct ponfw_gem_port_id fw_gem_output = {0};
-	struct list_head *ele;
-	struct ltq_pon_net_gem *gem_ele;
-	int err;
-
-	/* Do not change index if it was already assigned before. */
-	if (gem->gem_idx)
-		return 0;
-
-	fw_gem_input.gem_port_id = gem->gem_id;
-
-	err = pon_mbox_send(PONFW_GEM_PORT_ID_CMD_ID, PONFW_READ,
-			    &fw_gem_input, PONFW_GEM_PORT_ID_LENR,
-			    &fw_gem_output, sizeof(fw_gem_output));
-	if (err != sizeof(fw_gem_output)) {
-		netdev_err(gem->ndev,
-			   "failed to get GEM idx for GEM id (%i): %i\n",
-			   gem->gem_id, err);
-		return err;
-	}
-
-	list_for_each(ele, &gem->hw->gem_list) {
-		gem_ele = list_entry(ele, struct ltq_pon_net_gem, node);
-		if (gem_ele->gem_idx == fw_gem_output.gem_port_idx &&
-		    gem_ele != gem) {
-			netdev_err(gem->ndev,
-				   "shares the same GEM index (%i) as %s\n",
-				   fw_gem_output.gem_port_idx,
-				   netdev_name(gem_ele->ndev));
-			return -EINVAL;
-		}
-	}
-
-	gem->gem_idx = fw_gem_output.gem_port_idx;
-	g_gem_idx_used[gem->gem_idx] = true;
-
-	netdev_dbg(gem->ndev,
-		   "GEM idx(%u) is assigned for GEM id (%i)\n",
-		   gem->gem_idx, gem->gem_id);
-
-	return 0;
-}
-
-static void ltq_pon_net_gem_delete(struct ltq_pon_net_gem *gem)
-{
-	struct ponfw_gem_port_id_remove fw_gem_input = {0};
-	struct ponfw_gem_port_id_remove fw_gem_output = {0};
-	int err;
-
-	g_gem_idx_used[gem->gem_idx] = false;
-
-	if (gem->gem_traffic_type == PONFW_GEM_PORT_ID_TT_OMCI)
-		return;
-
-	if (!atomic_read(&g_hw->in_o5))
-		return;
-
-	fw_gem_input.gem_port_id = gem->gem_id;
-
-	err = pon_mbox_send(PONFW_GEM_PORT_ID_REMOVE_CMD_ID, PONFW_WRITE,
-			     &fw_gem_input, PONFW_GEM_PORT_ID_REMOVE_LEN,
-			     &fw_gem_output, sizeof(fw_gem_output));
-	if (err < 0) {
-		netdev_err(gem->ndev, "failed to remove GEM port id (%i): %i\n",
-			   gem->gem_id, err);
-		return;
-	}
-
-	netdev_dbg(gem->ndev, "GEM id (%i) removed\n", gem->gem_id);
 }
 
 static int ltq_pon_net_gem_link_apply(struct ltq_pon_net_gem *gem,
@@ -2471,8 +2137,8 @@ static int ltq_pon_net_gem_link_apply(struct ltq_pon_net_gem *gem,
 		 * device on the datapath library.
 		 */
 		if (tcont_ndev_idx) {
-			tcont_ndev = dev_get_by_index(gem->src_net,
-						      tcont_ndev_idx);
+			tcont_ndev =
+				dev_get_by_index(gem->src_net, tcont_ndev_idx);
 			if (!tcont_ndev) {
 				netdev_err(dp_ndev, "Invalid tcont_ndev!\n");
 				return -ENODEV;
@@ -2483,9 +2149,11 @@ static int ltq_pon_net_gem_link_apply(struct ltq_pon_net_gem *gem,
 			/* check if this is a pon master device */
 			if (tcont_ops->ndo_open != &ltq_pon_net_tcont_open) {
 				dev_put(tcont_ndev);
-				netdev_err(dp_ndev, "Added interface (%s) is not a T-CONT\n",
-						tcont_ndev ?
-						netdev_name(tcont_ndev) : NULL);
+				netdev_err(
+					dp_ndev,
+					"Added interface (%s) is not a T-CONT\n",
+					tcont_ndev ? netdev_name(tcont_ndev) :
+						     NULL);
 				return -ENODEV;
 			}
 			tcont = netdev_priv(tcont_ndev);
@@ -2505,7 +2173,7 @@ static int ltq_pon_net_gem_link_apply(struct ltq_pon_net_gem *gem,
 				dev_put(tcont_ndev);
 			}
 		} else {
-			if (gem->tcont != NULL) {
+			if (gem->tcont) {
 				gem->dp_update = true;
 				list_del(&gem->tcont_node);
 				dev_put(gem->tcont->ndev);
@@ -2528,8 +2196,8 @@ static int ltq_pon_net_gem_link_apply(struct ltq_pon_net_gem *gem,
 			 * again. When this gem port is part of a pmapper this
 			 * is the pmapper net device and not the gem net device.
 			 */
-			err = ltq_pon_net_dp_gem_update(gem,
-				gem->pmapper ? gem->pmapper->ndev : NULL);
+			err = ltq_pon_net_dp_gem_update(
+				gem, gem->pmapper ? gem->pmapper->ndev : NULL);
 			if (err)
 				goto err_upd_ndev;
 
@@ -2566,13 +2234,13 @@ err_upd_ndev:
 	return err;
 }
 
-static int ltq_pon_net_gem_validate(struct ltq_pon_net_gem *gem,
-				    struct nlattr *data[])
+static int ltq_pon_net_gem_validate_and_update(struct ltq_pon_net_gem *gem,
+					       struct nlattr *data[],
+					       struct gem_port_info *gem_info)
 {
-
-	u8 gem_traffic_type = gem->gem_traffic_type;
-	u8 gem_dir = gem->gem_dir;
-	u8 gem_enc = gem->gem_enc;
+	u8 gem_traffic_type = gem_info->traffic_type;
+	u8 gem_dir = gem_info->dir;
+	u8 gem_enc = gem_info->enc;
 	/* It is sufficient to check if t-cont is set. */
 	u32 tcont_ndev_idx = gem->tcont ? 1 : 0;
 
@@ -2618,17 +2286,18 @@ static int ltq_pon_net_gem_validate(struct ltq_pon_net_gem *gem,
 	}
 
 	if (data[IFLA_PON_GEM_MAX_SIZE])
-		gem->gem_max_size = nla_get_u16(data[IFLA_PON_GEM_MAX_SIZE]);
+		gem_info->max_size = nla_get_u16(data[IFLA_PON_GEM_MAX_SIZE]);
 
-	if (data[IFLA_PON_GEM_TRAFFIC_TYPE])
-		gem->gem_traffic_type =
-			nla_get_u8(data[IFLA_PON_GEM_TRAFFIC_TYPE]);
+	if (data[IFLA_PON_GEM_TRAFFIC_TYPE]) {
+		gem_info->traffic_type = gem_traffic_type;
+		gem->is_omci = (gem_traffic_type == PONFW_GEM_PORT_ID_TT_OMCI);
+	}
 
 	if (data[IFLA_PON_GEM_DIR])
-		gem->gem_dir = nla_get_u8(data[IFLA_PON_GEM_DIR]);
+		gem_info->dir = gem_dir;
 
 	if (data[IFLA_PON_GEM_ENC])
-		gem->gem_enc = nla_get_u8(data[IFLA_PON_GEM_ENC]);
+		gem_info->enc = gem_enc;
 
 	if (data[IFLA_PON_GEM_MC]) {
 		gem->multicast = nla_get_u8(data[IFLA_PON_GEM_MC]);
@@ -2638,86 +2307,16 @@ static int ltq_pon_net_gem_validate(struct ltq_pon_net_gem *gem,
 	return 0;
 }
 
-static int ltq_pon_net_gem_valid_id(struct net_device *ndev, u32 gem_id)
-{
-	enum pon_mode mode = pon_mbox_get_pon_mode();
-
-	switch (mode) {
-	case PON_MODE_984_GPON:
-		if (gem_id > 4095) {
-			netdev_err(ndev, "id (%i) not in valid range [0 ... 4095]\n",
-				   gem_id);
-			return -EINVAL;
-		}
-		return 0;
-	case PON_MODE_987_XGPON:
-		if (gem_id < 1023 || gem_id > 65534) {
-			netdev_err(ndev, "id (%i) not in valid range [1023 ... 65534]\n",
-				   gem_id);
-			return -EINVAL;
-		}
-		return 0;
-	case PON_MODE_9807_XGSPON:
-	case PON_MODE_989_NGPON2_2G5:
-	case PON_MODE_989_NGPON2_10G:
-		if (gem_id < 1021 || gem_id > 65534) {
-			netdev_err(ndev, "id (%i) not in valid range [1021 ... 65534]\n",
-				   gem_id);
-			return -EINVAL;
-		}
-		return 0;
-	case PON_MODE_UNKNOWN:
-	case PON_MODE_AON:
-	default:
-		netdev_err(ndev, "system in unsupported pon mode\n");
-		return -EINVAL;
-	}
-}
-
-static int ltq_pon_net_gem_id_unique_check(struct ltq_pon_net_gem *gem)
-{
-	struct list_head *ele;
-	struct ltq_pon_net_gem *gem_ele;
-
-	list_for_each(ele, &gem->hw->gem_list) {
-		gem_ele = list_entry(ele, struct ltq_pon_net_gem, node);
-		/* Condition checks if the traffic type of compared GEM is
-		 * TT_OMCI and the error is not returned even if GEM with
-		 * such type already used the same ID. It is a workaround
-		 * used because of lack of synchronization between the driver
-		 * and FW. For GEM OMCI the ID in the PON Ethernet driver could
-		 * be outdated and the PON FW could already use a different one.
-		 */
-		if (gem_ele->gem_id == gem->gem_id &&
-		    gem_ele != gem &&
-		    gem_ele->gem_traffic_type != PONFW_GEM_PORT_ID_TT_OMCI) {
-			netdev_err(gem->ndev,
-				   "GEM with id (%i) already exists: %s\n",
-				   gem->gem_id,
-				   netdev_name(gem_ele->ndev));
-			return -EINVAL;
-		}
-	}
-
-	return 0;
-}
-
 /** Creates a new GEM port on the Interface given in IFLA_LINK. */
-#if (KERNEL_VERSION(4, 13, 0) > LINUX_VERSION_CODE)
 static int ltq_pon_net_gem_newlink(struct net *src_net,
 				   struct net_device *gem_ndev,
-				   struct nlattr *tb[], struct nlattr *data[])
-#else
-static int ltq_pon_net_gem_newlink(struct net *src_net,
-				   struct net_device *gem_ndev,
-				   struct nlattr *tb[],
-				   struct nlattr *data[],
+				   struct nlattr *tb[], struct nlattr *data[],
 				   struct netlink_ext_ack *extack)
-#endif
 {
 	struct ltq_pon_net_gem *gem = netdev_priv(gem_ndev);
 	struct ltq_pon_net_hw *hw;
 	struct net_device *hw_ndev;
+	struct gem_port_info gem_info = { 0 };
 	int err;
 
 	if (!tb[IFLA_LINK]) {
@@ -2741,7 +2340,6 @@ static int ltq_pon_net_gem_newlink(struct net *src_net,
 	gem->hw = hw;
 	gem->ndev = gem_ndev;
 	gem->src_net = src_net;
-	gem->valid = true;
 	gem->multicast = false;
 	gem->dp_update = true;
 
@@ -2752,28 +2350,38 @@ static int ltq_pon_net_gem_newlink(struct net *src_net,
 	}
 
 	if (!data || (!data[IFLA_PON_GEM_IDX] && !data[IFLA_PON_GEM_ID])) {
-		netdev_err(gem_ndev,
-			   "Invalid GEM id provided!\n");
+		netdev_err(gem_ndev, "Invalid GEM id provided!\n");
 		err = -EINVAL;
 		goto err_put_dev;
 	}
 
-	err = ltq_pon_net_gem_validate(gem, data);
+	err = ltq_pon_net_gem_validate_and_update(gem, data, &gem_info);
 	if (err)
 		goto err_put_dev;
 
 	if (data[IFLA_PON_GEM_IDX]) {
-		if (gem->gem_traffic_type != PONFW_GEM_PORT_ID_TT_OMCI) {
+		if (!gem->is_omci) {
 			netdev_err(gem_ndev,
 				   "setting GEM index only allowed for OMCI\n");
 			err = -EINVAL;
 			goto err_put_dev;
 		}
-		gem->gem_idx = nla_get_u16(data[IFLA_PON_GEM_IDX]);
-		if (gem->gem_idx) {
-			netdev_err(gem_ndev,
-				   "GEM Index is special argument for gem-omci, do not use!\n");
+		gem_info.idx = nla_get_u16(data[IFLA_PON_GEM_IDX]);
+		if (gem_info.idx) {
+			netdev_err(
+				gem_ndev,
+				"GEM Index is special argument for gem-omci, do not use other values than 0!\n");
 			err = -EINVAL;
+			goto err_put_dev;
+		}
+		/* Allocate GEM info structure for OMCI */
+		gem->gem_info = gem_port_allocate(0, &gem_info);
+		if (IS_ERR_OR_NULL(gem->gem_info)) {
+			netdev_err(gem_ndev, "GEM info allocation failed!\n");
+			err = PTR_ERR_OR_ZERO(gem->gem_info);
+			if (err == 0)
+				err = -ENOMEM;
+			gem->gem_info = NULL;
 			goto err_put_dev;
 		}
 		/* OMCI traffic needs the CPU port */
@@ -2781,24 +2389,22 @@ static int ltq_pon_net_gem_newlink(struct net *src_net,
 	}
 
 	if (data[IFLA_PON_GEM_ID]) {
-		gem->gem_id = nla_get_u32(data[IFLA_PON_GEM_ID]);
+		gem_info.id = nla_get_u32(data[IFLA_PON_GEM_ID]);
 
-		err = ltq_pon_net_gem_valid_id(gem_ndev, gem->gem_id);
+		/* Allocate GEM info structure for non-OMCI */
+		gem->gem_info = gem_port_allocate(gem_info.id, &gem_info);
+		if (IS_ERR_OR_NULL(gem->gem_info)) {
+			netdev_err(gem_ndev, "GEM info allocation failed!\n");
+			err = PTR_ERR_OR_ZERO(gem->gem_info);
+			if (err == 0)
+				err = -ENOMEM;
+			gem->gem_info = NULL;
+			goto err_put_dev;
+		}
+
+		err = gem_port_fw_apply(gem->gem_info, NULL);
 		if (err)
 			goto err_put_dev;
-
-		err = ltq_pon_net_gem_id_unique_check(gem);
-		if (err)
-			goto err_put_dev;
-
-		err = ltq_pon_net_gem_fw_apply(gem, NULL);
-		if (err)
-			goto err_put_dev;
-
-		/* The GEM index is needed for DP and assigned by the PON FW */
-		err = ltq_pon_net_gem_port_idx_get(gem);
-		if (err)
-			goto err_gem_id_remove;
 	}
 
 	err = register_netdevice(gem_ndev);
@@ -2812,14 +2418,15 @@ static int ltq_pon_net_gem_newlink(struct net *src_net,
 		goto err_gem_unregister;
 
 	/* Call it again to also apply the T-Cont */
-	err = ltq_pon_net_gem_fw_apply(gem, gem->tcont);
+	err = gem_port_fw_apply(gem->gem_info,
+				gem->tcont ? gem->tcont->info : NULL);
 	if (err) {
 		netdev_err(gem_ndev, "%s: Update PON FW failed: %i", __func__,
 			   err);
 		goto err_gem_unlink;
 	}
 
-	gem_port_id_write_update(gem->gem_idx);
+	gem_port_id_write_update(gem->gem_info->idx);
 
 	list_add(&gem->node, &hw->gem_list);
 
@@ -2840,50 +2447,47 @@ err_gem_unlink:
 err_gem_unregister:
 	unregister_netdevice(gem_ndev);
 err_gem_id_remove:
-	if (data[IFLA_PON_GEM_ID])
-		ltq_pon_net_gem_delete(gem);
+	gem_port_fw_free(gem->gem_info);
 err_put_dev:
 	dev_put(hw_ndev);
 
 	return err;
 }
 
-#if (KERNEL_VERSION(4, 13, 0) > LINUX_VERSION_CODE)
-static int ltq_pon_net_gem_changelink(struct net_device *gem_ndev,
-				      struct nlattr *tb[],
-				      struct nlattr *data[])
-#else
 static int ltq_pon_net_gem_changelink(struct net_device *gem_ndev,
 				      struct nlattr *tb[],
 				      struct nlattr *data[],
 				      struct netlink_ext_ack *extack)
-#endif
 {
 	struct ltq_pon_net_gem *gem = netdev_priv(gem_ndev);
+	struct gem_port_info gem_info = { 0 };
 	int err;
 
-	if (!data || gem->gem_traffic_type == PONFW_GEM_PORT_ID_TT_OMCI) {
+	if (!data || gem->is_omci) {
 		netdev_err(gem_ndev, "Invalid data\n");
 		return -EINVAL;
 	}
 
 	if (data[IFLA_PON_GEM_IDX] &&
-	    nla_get_u16(data[IFLA_PON_GEM_IDX]) != gem->gem_idx) {
+	    nla_get_u16(data[IFLA_PON_GEM_IDX]) != gem->gem_info->idx) {
 		netdev_err(gem_ndev, "Changing GEM index to %i not allowed\n",
 			   nla_get_u16(data[IFLA_PON_GEM_IDX]));
 		return -EINVAL;
 	}
 
 	if (data[IFLA_PON_GEM_ID] &&
-	    nla_get_u32(data[IFLA_PON_GEM_ID]) != gem->gem_id) {
+	    nla_get_u32(data[IFLA_PON_GEM_ID]) != gem->gem_info->id) {
 		netdev_err(gem_ndev, "Changing GEM ID to %i not allowed\n",
 			   nla_get_u32(data[IFLA_PON_GEM_ID]));
 		return -EINVAL;
 	}
 
-	err = ltq_pon_net_gem_validate(gem, data);
+	memcpy(&gem_info, gem->gem_info, sizeof(gem_info));
+	err = ltq_pon_net_gem_validate_and_update(gem, data, &gem_info);
 	if (err)
 		return err;
+
+	memcpy(gem->gem_info, &gem_info, sizeof(gem_info));
 
 	err = ltq_pon_net_gem_link_apply(gem, tb, data);
 	if (err) {
@@ -2891,7 +2495,8 @@ static int ltq_pon_net_gem_changelink(struct net_device *gem_ndev,
 		return -EINVAL;
 	}
 
-	err = ltq_pon_net_gem_fw_apply(gem, gem->tcont);
+	err = gem_port_fw_apply(gem->gem_info,
+				gem->tcont ? gem->tcont->info : NULL);
 	if (err)
 		netdev_err(gem_ndev, "%s: Update PON FW failed: %i", __func__,
 			   err);
@@ -2906,8 +2511,8 @@ static void ltq_pon_net_mdev_archive_stats(struct net_device *netdev, u64 *data,
 	struct ltq_pon_net_hw *hw = netdev_priv(netdev);
 
 	if (!hw->ani_archived_stats) {
-		hw->ani_archived_stats =
-		    kcalloc(count, sizeof(*hw->ani_archived_stats), GFP_KERNEL);
+		hw->ani_archived_stats = kcalloc(
+			count, sizeof(*hw->ani_archived_stats), GFP_KERNEL);
 		if (!hw->ani_archived_stats)
 			return;
 
@@ -2915,8 +2520,10 @@ static void ltq_pon_net_mdev_archive_stats(struct net_device *netdev, u64 *data,
 	}
 
 	if (hw->num_ani_archived_stats != count) {
-		netdev_err(netdev, "%s: attempting to archive unexpected number of counters",
-			   __func__);
+		netdev_err(
+			netdev,
+			"%s: attempting to archive unexpected number of counters",
+			__func__);
 		return;
 	}
 
@@ -2975,9 +2582,8 @@ static void ltq_pon_net_gem_dellink(struct net_device *gem_ndev,
 	struct ltq_pon_net_gem *gem = netdev_priv(gem_ndev);
 	struct ltq_pon_net_tcont *tcont = gem->tcont;
 
-	if (gem->valid)
-		netif_carrier_off(gem_ndev);
-	gem_port_id_remove_update(gem->gem_idx);
+	netif_carrier_off(gem_ndev);
+	gem_port_id_remove_update(gem->gem_info->idx);
 
 	/* When a GEM port is deleted we should still count the packets on the
 	 * pon0 counters. To achieve this we must store the accumulated counter
@@ -2986,7 +2592,7 @@ static void ltq_pon_net_gem_dellink(struct net_device *gem_ndev,
 	 */
 	archive_gem_port_stats(gem_ndev);
 
-	ltq_pon_net_gem_delete(gem);
+	gem_port_fw_free(gem->gem_info);
 
 	if (tcont) {
 		list_del(&gem->tcont_node);
@@ -3031,8 +2637,8 @@ ltq_pon_net_tcont_nl_policy[IFLA_PON_TCONT_MAX] = {
 /** Returns the maximum size of a T-CONT configuration NetLink message */
 static size_t ltq_pon_net_tcont_nl_getsize(const struct net_device *gem_ndev)
 {
-	return nla_total_size(sizeof(u16)) +	/* IFLA_PON_TCONT_IDX */
-	       nla_total_size(sizeof(u32));	/* IFLA_PON_TCONT_ID */
+	return nla_total_size(sizeof(u16)) + /* IFLA_PON_TCONT_IDX */
+	       nla_total_size(sizeof(u32)); /* IFLA_PON_TCONT_ID */
 }
 
 /** Fills the NetLink message with the full configuration of this T-CONT. */
@@ -3041,13 +2647,29 @@ static int ltq_pon_net_tcont_fill_info(struct sk_buff *skb,
 {
 	struct ltq_pon_net_tcont *tcont = netdev_priv(tcont_ndev);
 
-	if (nla_put_u16(skb, IFLA_PON_TCONT_IDX, tcont->qos_idx))
+	if (!tcont->info) {
+		netdev_err(tcont_ndev, "T-CONT info not found\n");
+		return -ENODEV;
+	}
+
+	if (nla_put_u16(skb, IFLA_PON_TCONT_IDX, tcont->info->qos_idx))
 		return -ENOBUFS;
 
-	if (nla_put_u32(skb, IFLA_PON_TCONT_ID, tcont->alloc_id))
+	if (nla_put_u32(skb, IFLA_PON_TCONT_ID, tcont->info->id))
 		return -ENOBUFS;
 
 	return 0;
+}
+
+/** This is called to destroy the T-CONT interface. */
+static void ltq_pon_net_tcont_destructor(struct net_device *dev)
+{
+	struct ltq_pon_net_tcont *tcont = netdev_priv(dev);
+
+	/* Free the T-CONT info structure */
+	alloc_id_free(tcont->info);
+	tcont->info = NULL;
+	netdev_dbg(dev, "Destroying T-CONT info\n");
 }
 
 /** This is called to configure the newly created T-CONT interface. The
@@ -3061,11 +2683,8 @@ static void ltq_pon_net_tcont_setup(struct net_device *tcont_ndev)
 	ether_setup(tcont_ndev);
 
 	tcont_ndev->netdev_ops = &ltq_pon_net_tcont_ops;
-#if (KERNEL_VERSION(4, 11, 0) > LINUX_VERSION_CODE)
-	tcont_ndev->destructor = free_netdev;
-#else
-	tcont_ndev->priv_destructor = free_netdev;
-#endif
+	tcont_ndev->priv_destructor = ltq_pon_net_tcont_destructor;
+	tcont_ndev->needs_free_netdev = true;
 
 	eth_hw_addr_random(tcont_ndev);
 
@@ -3078,336 +2697,45 @@ static void ltq_pon_net_tcont_setup(struct net_device *tcont_ndev)
 
 	INIT_LIST_HEAD(&tcont->node);
 	INIT_LIST_HEAD(&tcont->gem_list);
-	tcont->queue_id = PON_ETH_QUEUE_UNASSIGNED;
 }
 
-/** Try to assign the QOS index that is already selected by the
- * T-CONT netdevice.
- */
-static int ltq_pon_net_qos_idx_preassign(struct net_device *tcont_ndev)
+static void alloc_qos_idx_flush(const struct alloc_info *info)
 {
-	struct ltq_pon_net_tcont *tcont = netdev_priv(tcont_ndev);
+	struct dp_qos_blk_flush_port flush_cfg = { 0 };
+	struct net_device *pon0 = g_hw->ndev;
+	int err;
 
-	/* Forcing a QOS index is not possible if it is already in use. */
-	if (g_qos_idx_used[tcont->qos_idx])
-		return -EEXIST;
-
-	g_qos_idx_used[tcont->qos_idx] = true;
-	netdev_dbg(tcont_ndev,
-		   "QOS Index (%u) pre-assigned for Alloc id (%u)\n",
-		   tcont->qos_idx, tcont->alloc_id);
-	return 0;
-}
-
-/** This function assign available QOS Index to provided TCONT netdevice. */
-static int ltq_pon_net_qos_idx_assign(struct net_device *tcont_ndev)
-{
-	struct ltq_pon_net_tcont *tcont = netdev_priv(tcont_ndev);
-	int i;
-
-	/* QOS Index 0 is used by OMCI channel, so skip it */
-	for (i = 1; i < ARRAY_SIZE(g_qos_idx_used); i++) {
-		if (g_qos_idx_used[i])
-			continue;
-
-		g_qos_idx_used[i] = true;
-		tcont->qos_idx = i;
-
-		netdev_dbg(tcont_ndev,
-			   "QOS Index (%u) assigned for Alloc id (%u)\n",
-			   tcont->qos_idx, tcont->alloc_id);
-
-		return 0;
-	}
-
-	netdev_err(tcont_ndev,
-		   "failed to assign QOS Index for Alloc id (%u)\n",
-		   tcont->alloc_id);
-
-	return -ENODATA;
-}
-
-/** This function free QOS Index used by provided TCONT netdevice */
-static void ltq_pon_net_qos_idx_free(struct net_device *tcont_ndev)
-{
-	struct ltq_pon_net_tcont *tcont = netdev_priv(tcont_ndev);
-
-	/* QOS Index 0 is reserved for the OMCI channel, so skip freeing it */
-	if (!tcont->qos_idx) {
-		netdev_dbg(tcont_ndev,
-			   "QOS Index free skipped for Alloc id (%u)\n",
-			   tcont->alloc_id);
+	/* We should only flush queues if we not in operational state
+	 * as it would cause issues with traffic on operating T-CONTs.
+	 */
+	if (!info->link_ref || atomic_read(&g_hw->in_o5)) {
+		netdev_dbg(pon0, "QOS Index flush skipped for Alloc id (%u)\n",
+			   info->id);
 		return;
 	}
 
-	netdev_dbg(tcont_ndev,
-		   "QOS Index (%u) freed for Alloc id (%u)\n",
-		   tcont->qos_idx, tcont->alloc_id);
-
-	g_qos_idx_used[tcont->qos_idx] = false;
-	tcont->qos_idx = 0;
-}
-
-static int ltq_pon_net_qos_idx_link(struct net_device *tcont_ndev, bool read)
-{
-	struct ltq_pon_net_tcont *tcont = netdev_priv(tcont_ndev);
-	struct ponfw_alloc_id_link fw_alloc_input = {0};
-	struct ponfw_alloc_id_link fw_alloc_output = {0};
-	int err;
-
-	fw_alloc_input.alloc_id = tcont->alloc_id;
-	fw_alloc_input.qos_idx = tcont->qos_idx;
-	fw_alloc_input.ctr = read ? PONFW_ALLOC_ID_LINK_CTR_READ :
-				    PONFW_ALLOC_ID_LINK_CTR_LINK;
-
-	err = pon_mbox_send(PONFW_ALLOC_ID_LINK_CMD_ID, PONFW_READ,
-			    &fw_alloc_input, PONFW_ALLOC_ID_LINK_LENR,
-			    &fw_alloc_output,
-			    sizeof(fw_alloc_output));
-	if (err < 0) {
-		/* ignore errors on read to handle not existing entries */
-		if (!read)
-			netdev_err(tcont_ndev,
-				   "failed to link QOS Index (%u) for Alloc id (%i): %i\n",
-				   tcont->qos_idx, tcont->alloc_id, err);
-		return err;
-	}
-
-	if (err != sizeof(fw_alloc_output)) {
-		err = -EINVAL;
-		netdev_err(tcont_ndev,
-			   "failed to get answer for link QOS Index (%u) for Alloc id (%i): %i\n",
-			   tcont->qos_idx, tcont->alloc_id, err);
-		return err;
-	}
-
-	tcont->alloc_idx = fw_alloc_output.alloc_link_ref & ALLOC_IDX_MASK;
-
-	if (tcont->alloc_idx &&
-	    fw_alloc_output.hw_status == PONFW_ALLOC_ID_LINK_HW_STATUS_LINKED) {
-		tcont->alloc_link_ref = fw_alloc_output.alloc_link_ref;
-#ifdef PONRTSYS_9459
-		/* TODO: this will work only in future FW versions, see
-		 * PONRTSYS-9441. Task for implementation is PONRTSYS-9459)
-		 */
-		tcont->qos_idx = fw_alloc_output.qos_idx;
-#else
-		if (read)
-			tcont->qos_idx =
-				g_alloc_idx_to_qos_idx[tcont->alloc_idx];
-		else
-			g_alloc_idx_to_qos_idx[tcont->alloc_idx] =
-				tcont->qos_idx;
-#endif
-		netdev_dbg(tcont_ndev,
-			   "%slinked QOS Index (%u) for Alloc id (%i) with Version number (0x%x)\n",
-			   read ? "read " : "",
-			   tcont->qos_idx, tcont->alloc_id,
-			   tcont->alloc_link_ref);
-
-		alloc_id_write_update(tcont->alloc_idx);
-	}
-
-	return 0;
-}
-
-static int ltq_pon_net_qos_idx_link_set(struct net_device *tcont_ndev)
-{
-	struct ltq_pon_net_tcont *tcont = netdev_priv(tcont_ndev);
-	int err;
-
-	/* Check if QOS Index is already linked to allocation */
-	if (!tcont->alloc_id_valid || tcont->alloc_link_ref) {
-		netdev_dbg(tcont_ndev,
-			   "QOS Index link skipped for Alloc id (%u)\n",
-			   tcont->alloc_id);
-		return 0;
-	}
-
-	err = ltq_pon_net_qos_idx_link(tcont_ndev, false);
-	if (err)
-		return err;
-
-	netdev_dbg(tcont_ndev,
-		   "QOS Index (%u) link requested for Alloc id (%u)\n",
-		   tcont->qos_idx, tcont->alloc_id);
-
-	return 0;
-}
-
-static int ltq_pon_net_qos_idx_link_get(struct net_device *tcont_ndev)
-{
-	struct ltq_pon_net_tcont *tcont = netdev_priv(tcont_ndev);
-	int err;
-
-	/* Check if QOS Index is linked to allocation and we already know the
-	 * QOS Index
-	 */
-	if (tcont->alloc_link_ref && tcont->qos_idx) {
-		netdev_dbg(tcont_ndev,
-			   "QOS Index link get skipped for Alloc id (%u)\n",
-			   tcont->alloc_id);
-		return 0;
-	}
-
-	err = ltq_pon_net_qos_idx_link(tcont_ndev, true);
-	if (err)
-		return err;
-
-	/* no valid entry found, indicate with error */
-	if (!tcont->alloc_link_ref)
-		return -ENOENT;
-
-	netdev_dbg(tcont_ndev,
-		   "QOS Index (%u) already linked for Alloc id (%u) with Version number (0x%x)\n",
-		   tcont->qos_idx, tcont->alloc_id, tcont->alloc_link_ref);
-
-	return 0;
-}
-
-static void
-ltq_pon_net_ack_alloc_unlink(const struct ponfw_alloc_id_unlink *fw_alloc)
-{
-	struct ponfw_alloc_id_unlink fw_alloc_input = {0};
-	int err;
-
-	fw_alloc_input.alloc_id = fw_alloc->alloc_id;
-	fw_alloc_input.alloc_link_ref = fw_alloc->alloc_link_ref;
-	err = pon_mbox_send(PONFW_ALLOC_ID_UNLINK_CMD_ID, PONFW_WRITE,
-			    &fw_alloc_input, sizeof(fw_alloc_input),
-			    NULL, 0);
-	if (err < 0)
-		pr_err("pon_eth: ALLOC_ID_UNLINK ack was rejected by FW: %i\n",
-		       err);
-}
-
-static void ltq_pon_net_qos_idx_flush(struct ltq_pon_net_tcont *tcont)
-{
-	struct dp_qos_blk_flush_port flush_cfg = {0,};
-	int err;
-
 	flush_cfg.inst = 0;
-	flush_cfg.dp_port = tcont->hw->port_id;
-	flush_cfg.deq_port_idx = tcont->qos_idx;
+	flush_cfg.dp_port = g_hw->port_id;
+	flush_cfg.deq_port_idx = info->qos_idx;
 	/* This will flush all queues connected to this dequeue port.
 	 * This operation takes about 40 to 100ms per dequeue port on PRX300.
 	 */
 	err = dp_block_flush_port(&flush_cfg, DP_QFLUSH_FLAG_RESTORE_LOOKUP);
 	if (err != DP_SUCCESS)
-		netdev_err(tcont->ndev, "DP flush for deq_port_idx: %i failed\n",
-			   tcont->qos_idx);
-}
-
-static void
-ltq_pon_net_qos_idx_unlink(struct net_device *tcont_ndev,
-			   const struct ponfw_alloc_id_unlink *fw_alloc)
-{
-	struct ltq_pon_net_tcont *tcont = netdev_priv(tcont_ndev);
-	struct ponfw_alloc_id_unlink fw_alloc_input = {0};
-	int err = 0;
-
-	if (!tcont->alloc_link_ref) {
-		if (!fw_alloc) {
-			netdev_dbg(tcont_ndev,
-				"QOS Index unlink skipped for Alloc id (%u)\n",
-				tcont->alloc_id);
-			return;
-		}
-		/* Here the SW thinks this T-CONT is not configured or
-		 * linked in the PON FW, but the PON FW still sends us
-		 * a unlink event. We have seen this condition in some
-		 * tests, but we do not understand why we get into
-		 * this situation. We should send an acknowledge anyway
-		 * to not block this index in the PON FW. After the
-		 * acknowledge the state of both systems should be
-		 * in sync again.
-		 */
-		netdev_warn(tcont_ndev, "ALLOC_ID_UNLINK event for unlinked tcont, alloc_id: %i, alloc_link_ref: %i\n",
-			    fw_alloc->alloc_id, fw_alloc->alloc_link_ref);
-		ltq_pon_net_ack_alloc_unlink(fw_alloc);
-		return;
-	}
-
-	fw_alloc_input.alloc_id = tcont->alloc_id;
-	fw_alloc_input.alloc_link_ref = tcont->alloc_link_ref;
-
-	/* We should only flush queues if we not in operational state
-	 * as it would cause issues with traffic on operating T-CONTs.
-	 */
-	if (!atomic_read(&g_hw->in_o5)) {
-		ltq_pon_net_qos_idx_flush(tcont);
-	} else {
-		/* We should send a unlink message to the PON FW only when this
-		 * was requested in operational state, in non-operational state
-		 * firmware already performed resources cleanup independently.
-		 */
-		err = pon_mbox_send(PONFW_ALLOC_ID_UNLINK_CMD_ID, PONFW_WRITE,
-				    &fw_alloc_input, sizeof(fw_alloc_input),
-				    NULL, 0);
-		if (err < 0) {
-			netdev_err(tcont_ndev,
-				   "failed to unlink QOS Index (%u) for Alloc id (%i): %i\n",
-				   tcont->qos_idx, tcont->alloc_id, err);
-			return;
-		}
-	}
-	if (tcont->alloc_idx)
-		g_alloc_idx_to_qos_idx[tcont->alloc_idx] = 0;
-
-	alloc_id_remove_update(tcont->alloc_idx);
-
-	netdev_dbg(tcont_ndev,
-		   "unlinked QOS Index (%u) for Alloc id (%i) with Version number (0x%x)\n",
-		   tcont->qos_idx, tcont->alloc_id, tcont->alloc_link_ref);
-
-	tcont->alloc_link_ref = 0;
-}
-
-static int ltq_pon_net_tcont_valid_id(struct net_device *ndev, u32 alloc_id)
-{
-	enum pon_mode mode = pon_mbox_get_pon_mode();
-
-	switch (mode) {
-	case PON_MODE_984_GPON:
-		if (alloc_id < 256 || alloc_id > 4095) {
-			netdev_err(ndev, "id (%i) not in valid range [256 ... 4095]\n",
-				   alloc_id);
-			return -EINVAL;
-		}
-		return 0;
-	case PON_MODE_987_XGPON:
-	case PON_MODE_9807_XGSPON:
-	case PON_MODE_989_NGPON2_2G5:
-	case PON_MODE_989_NGPON2_10G:
-		if (alloc_id < 1024 || alloc_id > 16383) {
-			netdev_err(ndev, "id (%i) not in valid range [1024 ... 16383]\n",
-				   alloc_id);
-			return -EINVAL;
-		}
-		return 0;
-	case PON_MODE_UNKNOWN:
-	case PON_MODE_AON:
-		netdev_err(ndev, "system in unsupported pon mode\n");
-		return -EINVAL;
-	}
-	return -EINVAL;
+		netdev_err(pon0, "DP flush for deq_port_idx: %i failed\n",
+			   info->qos_idx);
 }
 
 /** Creates a new T-CONT on the interface given in IFLA_LINK. */
-#if (KERNEL_VERSION(4, 13, 0) > LINUX_VERSION_CODE)
-static int ltq_pon_net_tcont_newlink(struct net *src_net,
-				     struct net_device *tcont_ndev,
-				     struct nlattr *tb[], struct nlattr *data[])
-#else
 static int ltq_pon_net_tcont_newlink(struct net *src_net,
 				     struct net_device *tcont_ndev,
 				     struct nlattr *tb[], struct nlattr *data[],
 				     struct netlink_ext_ack *extack)
-#endif
 {
 	struct ltq_pon_net_tcont *tcont = netdev_priv(tcont_ndev);
 	struct ltq_pon_net_hw *hw;
 	struct net_device *hw_ndev;
+	struct alloc_info alloc_info = { 0 };
 	int err;
 
 	if (!tb[IFLA_LINK]) {
@@ -3417,7 +2745,8 @@ static int ltq_pon_net_tcont_newlink(struct net *src_net,
 
 	hw_ndev = dev_get_by_index(src_net, nla_get_u32(tb[IFLA_LINK]));
 	if (!hw_ndev) {
-		netdev_err(tcont_ndev, "Invalid/missing netlink value hw_ndev\n");
+		netdev_err(tcont_ndev,
+			   "Invalid/missing netlink value hw_ndev\n");
 		return -ENODEV;
 	}
 
@@ -3437,57 +2766,49 @@ static int ltq_pon_net_tcont_newlink(struct net *src_net,
 	}
 
 	if (!data || (!data[IFLA_PON_TCONT_IDX] && !data[IFLA_PON_TCONT_ID])) {
-		netdev_err(tcont_ndev,
-			   "Invalid TCONT id provided!\n");
+		netdev_err(tcont_ndev, "Invalid TCONT id provided!\n");
 		err = -EINVAL;
 		goto err_put_dev;
 	}
 
 	if (data[IFLA_PON_TCONT_IDX]) {
-		tcont->alloc_idx = nla_get_u16(data[IFLA_PON_TCONT_IDX]);
-		if (tcont->alloc_idx) {
-			netdev_err(tcont_ndev,
-				   "Alloc Index is special argument for tcont-omci, do not use!\n");
+		alloc_info.idx = nla_get_u16(data[IFLA_PON_TCONT_IDX]);
+		if (alloc_info.idx) {
+			netdev_err(
+				tcont_ndev,
+				"Alloc Index is special argument for tcont-omci, do not use!\n");
 			err = -EINVAL;
 			goto err_put_dev;
 		}
 		tcont->tcont_omci = true;
-		alloc_id_write_update(tcont->alloc_idx);
+		tcont->info = alloc_id_allocate(0, &alloc_info);
+		if (IS_ERR_OR_NULL(tcont->info)) {
+			netdev_err(tcont_ndev, "Alloc id allocation failed!\n");
+			err = PTR_ERR_OR_ZERO(tcont->info);
+			if (err == 0)
+				err = -ENOMEM;
+			tcont->info = NULL;
+			goto err_put_dev;
+		}
 	}
 
 	if (data[IFLA_PON_TCONT_ID]) {
-		tcont->alloc_id = nla_get_u32(data[IFLA_PON_TCONT_ID]);
+		alloc_info.id = nla_get_u32(data[IFLA_PON_TCONT_ID]);
 
-		err = ltq_pon_net_tcont_valid_id(tcont_ndev, tcont->alloc_id);
+		tcont->info = alloc_id_allocate(alloc_info.id, &alloc_info);
+		if (IS_ERR_OR_NULL(tcont->info)) {
+			netdev_err(tcont_ndev, "Alloc id allocation failed!\n");
+			err = PTR_ERR_OR_ZERO(tcont->info);
+			if (err == 0)
+				err = -ENOMEM;
+			tcont->info = NULL;
+			goto err_put_dev;
+		}
+
+		/* Ensure we link the new QOS Index or the old is valid. */
+		err = alloc_qos_idx_link_new(tcont->info);
 		if (err)
 			goto err_put_dev;
-
-		/* check if the firmware has already a qos idx linked
-		 * and try to reuse it.
-		 */
-		err = ltq_pon_net_qos_idx_link_get(tcont_ndev);
-		if (!err) {
-			err = ltq_pon_net_qos_idx_preassign(tcont_ndev);
-			/* if this fails, the entry is already in use.
-			 * Free it and request a new assignment below.
-			 */
-			if (err)
-				ltq_pon_net_qos_idx_unlink(tcont_ndev, NULL);
-			else
-				tcont->alloc_id_valid = true;
-		}
-
-		if (!tcont->alloc_id_valid) {
-			err = ltq_pon_net_qos_idx_assign(tcont_ndev);
-			if (err)
-				goto err_put_dev;
-
-			tcont->alloc_id_valid = true;
-
-			err = ltq_pon_net_qos_idx_link_set(tcont_ndev);
-			if (err)
-				goto err_put_dev_unassign;
-		}
 	}
 
 	tcont->hw = hw;
@@ -3503,12 +2824,12 @@ static int ltq_pon_net_tcont_newlink(struct net *src_net,
 
 err_list_remove:
 	list_del(&tcont->node);
-	if (tcont->alloc_link_ref)
-		ltq_pon_net_qos_idx_unlink(tcont_ndev, NULL);
-err_put_dev_unassign:
-	if (tcont->alloc_id_valid)
-		ltq_pon_net_qos_idx_free(tcont_ndev);
+	alloc_qos_idx_unlink(tcont->info);
 err_put_dev:
+	/* Free the T-CONT info structure, also okay if still NULL */
+	alloc_id_free(tcont->info);
+	tcont->info = NULL;
+
 	dev_put(hw_ndev);
 
 	return err;
@@ -3523,7 +2844,7 @@ static int ltq_pon_net_gem_disconnect_tcont(struct ltq_pon_net_gem *gem)
 		list_del(&gem->tcont_node);
 		dev_put(tcont->ndev);
 		gem->tcont = NULL;
-		ltq_pon_net_gem_fw_apply(gem, NULL);
+		gem_port_fw_apply(gem->gem_info, NULL);
 	}
 
 	if (!gem->dp_connected)
@@ -3546,8 +2867,7 @@ static void ltq_pon_net_tcont_dellink(struct net_device *tcont_ndev,
 		ltq_pon_net_gem_disconnect_tcont(gem);
 	}
 
-	ltq_pon_net_qos_idx_unlink(tcont_ndev, NULL);
-	ltq_pon_net_qos_idx_free(tcont_ndev);
+	alloc_qos_idx_unlink(tcont->info);
 
 	list_del(&tcont->node);
 
@@ -3609,28 +2929,28 @@ enum {
 };
 
 static const struct nla_policy
-ltq_pon_net_pmapper_nl_policy[IFLA_PON_PMAPPER_MAX] = {
-	[IFLA_PON_PMAPPER_PCP_DEF]	= { .type = NLA_U8 },
-	[IFLA_PON_PMAPPER_PCP_0]	= { .type = NLA_U32 },
-	[IFLA_PON_PMAPPER_PCP_1]	= { .type = NLA_U32 },
-	[IFLA_PON_PMAPPER_PCP_2]	= { .type = NLA_U32 },
-	[IFLA_PON_PMAPPER_PCP_3]	= { .type = NLA_U32 },
-	[IFLA_PON_PMAPPER_PCP_4]	= { .type = NLA_U32 },
-	[IFLA_PON_PMAPPER_PCP_5]	= { .type = NLA_U32 },
-	[IFLA_PON_PMAPPER_PCP_6]	= { .type = NLA_U32 },
-	[IFLA_PON_PMAPPER_PCP_7]	= { .type = NLA_U32 },
-	[IFLA_PON_PMAPPER_MODE]		= { .type = NLA_U8 },
-	[IFLA_PON_PMAPPER_DSCP]		= { .type = NLA_NESTED },
-	[IFLA_PON_PMAPPER_BP]		= { .type = NLA_U16 },
-	[IFLA_PON_GEM_CTP_0]		= { .type = NLA_U32 },
-	[IFLA_PON_GEM_CTP_1]		= { .type = NLA_U32 },
-	[IFLA_PON_GEM_CTP_2]		= { .type = NLA_U32 },
-	[IFLA_PON_GEM_CTP_3]		= { .type = NLA_U32 },
-	[IFLA_PON_GEM_CTP_4]		= { .type = NLA_U32 },
-	[IFLA_PON_GEM_CTP_5]		= { .type = NLA_U32 },
-	[IFLA_PON_GEM_CTP_6]		= { .type = NLA_U32 },
-	[IFLA_PON_GEM_CTP_7]		= { .type = NLA_U32 },
-};
+	ltq_pon_net_pmapper_nl_policy[IFLA_PON_PMAPPER_MAX] = {
+		[IFLA_PON_PMAPPER_PCP_DEF] = { .type = NLA_U8 },
+		[IFLA_PON_PMAPPER_PCP_0] = { .type = NLA_U32 },
+		[IFLA_PON_PMAPPER_PCP_1] = { .type = NLA_U32 },
+		[IFLA_PON_PMAPPER_PCP_2] = { .type = NLA_U32 },
+		[IFLA_PON_PMAPPER_PCP_3] = { .type = NLA_U32 },
+		[IFLA_PON_PMAPPER_PCP_4] = { .type = NLA_U32 },
+		[IFLA_PON_PMAPPER_PCP_5] = { .type = NLA_U32 },
+		[IFLA_PON_PMAPPER_PCP_6] = { .type = NLA_U32 },
+		[IFLA_PON_PMAPPER_PCP_7] = { .type = NLA_U32 },
+		[IFLA_PON_PMAPPER_MODE] = { .type = NLA_U8 },
+		[IFLA_PON_PMAPPER_DSCP] = { .type = NLA_NESTED },
+		[IFLA_PON_PMAPPER_BP] = { .type = NLA_U16 },
+		[IFLA_PON_GEM_CTP_0] = { .type = NLA_U32 },
+		[IFLA_PON_GEM_CTP_1] = { .type = NLA_U32 },
+		[IFLA_PON_GEM_CTP_2] = { .type = NLA_U32 },
+		[IFLA_PON_GEM_CTP_3] = { .type = NLA_U32 },
+		[IFLA_PON_GEM_CTP_4] = { .type = NLA_U32 },
+		[IFLA_PON_GEM_CTP_5] = { .type = NLA_U32 },
+		[IFLA_PON_GEM_CTP_6] = { .type = NLA_U32 },
+		[IFLA_PON_GEM_CTP_7] = { .type = NLA_U32 },
+	};
 
 enum {
 	IFLA_PON_PMAPPER_DSCP_UNSPEC,
@@ -3702,7 +3022,7 @@ enum {
 };
 
 static const struct nla_policy
-ltq_pon_net_pmapper_dscp_nl_policy[IFLA_PON_PMAPPER_DSCP_MAX] = {
+	ltq_pon_net_pmapper_dscp_nl_policy[IFLA_PON_PMAPPER_DSCP_MAX] = {
 	[IFLA_PON_PMAPPER_DSCP_0]	= { .type = NLA_U8 },
 	[IFLA_PON_PMAPPER_DSCP_1]	= { .type = NLA_U8 },
 	[IFLA_PON_PMAPPER_DSCP_2]	= { .type = NLA_U8 },
@@ -3767,7 +3087,7 @@ ltq_pon_net_pmapper_dscp_nl_policy[IFLA_PON_PMAPPER_DSCP_MAX] = {
 	[IFLA_PON_PMAPPER_DSCP_61]	= { .type = NLA_U8 },
 	[IFLA_PON_PMAPPER_DSCP_62]	= { .type = NLA_U8 },
 	[IFLA_PON_PMAPPER_DSCP_63]	= { .type = NLA_U8 },
-};
+	};
 
 /** Returns the maximum size of a IEEE 802.1p mapper configuration NetLink
  * message
@@ -3775,9 +3095,9 @@ ltq_pon_net_pmapper_dscp_nl_policy[IFLA_PON_PMAPPER_DSCP_MAX] = {
 static size_t
 ltq_pon_net_pmapper_nl_getsize(const struct net_device *pmapper_ndev)
 {
-	return nla_total_size(sizeof(u8)) +	/* IFLA_PON_PMAPPER_PCP_DEF */
+	return nla_total_size(sizeof(u8)) + /* IFLA_PON_PMAPPER_PCP_DEF */
 	       DP_PMAP_PCP_NUM * nla_total_size(sizeof(u32)) +
-	       nla_total_size(sizeof(u8)) +	/* IFLA_PON_PMAPPER_MODE */
+	       nla_total_size(sizeof(u8)) + /* IFLA_PON_PMAPPER_MODE */
 	       /* IFLA_PON_PMAPPER_DSCP */
 	       nla_total_size(sizeof(struct nlattr)) +
 	       DP_PMAP_DSCP_NUM * nla_total_size(sizeof(u8));
@@ -3803,8 +3123,8 @@ static int ltq_pon_net_pmapper_fill_info(struct sk_buff *skb,
 	/* Do not handle error because this is an uncritical debugging attribute
 	 * and we continue to not break the main function
 	 */
-	ret = dp_get_netif_subifid(pmapper->ndev, NULL, NULL, NULL,
-				   &dp_subif, 0);
+	ret = dp_get_netif_subifid(pmapper->ndev, NULL, NULL, NULL, &dp_subif,
+				   0);
 	if (ret == DP_SUCCESS) {
 		if (nla_put_u16(skb, IFLA_PON_PMAPPER_BP, dp_subif.bport))
 			return -ENOBUFS;
@@ -3831,13 +3151,13 @@ static int ltq_pon_net_pmapper_fill_info(struct sk_buff *skb,
 	}
 
 	dscp = nla_nest_start(skb, IFLA_PON_PMAPPER_DSCP);
-	if (dscp == NULL)
+	if (!dscp)
 		return -ENOBUFS;
 
 	for (i = 0; i < DP_PMAP_DSCP_NUM; i++) {
 		if (pmapper->dscp_map[i] != PON_PMAPPER_DSCP_DEFAULT) {
 			if (nla_put_u8(skb, IFLA_PON_PMAPPER_DSCP_0 + i,
-					pmapper->dscp_map[i]))
+				       pmapper->dscp_map[i]))
 				return -ENOBUFS;
 		}
 	}
@@ -3866,11 +3186,7 @@ static void ltq_pon_net_pmapper_setup(struct net_device *pmapper_ndev)
 
 	pmapper_ndev->netdev_ops = &ltq_pon_net_pmapper_ops;
 	pmapper_ndev->ethtool_ops = &ethtool_ops;
-#if (KERNEL_VERSION(4, 11, 0) > LINUX_VERSION_CODE)
-	pmapper_ndev->destructor = free_netdev;
-#else
 	pmapper_ndev->priv_destructor = free_netdev;
-#endif
 
 	if (pmapper->hw && pmapper->hw->soc_data &&
 	    pmapper->hw->soc_data->pmac_remove)
@@ -3894,8 +3210,8 @@ static void ltq_pon_net_pmapper_setup(struct net_device *pmapper_ndev)
 /* attempts to find a p-mapper which references given gem_idx if any.
  * given p-mapper (p_mapper) is excluded from the scan.
  */
-struct ltq_pon_net_pmapper*
-pmapper_next(struct ltq_pon_net_pmapper *p_mapper, u8 gem_idx)
+struct ltq_pon_net_pmapper *pmapper_next(struct ltq_pon_net_pmapper *p_mapper,
+					 u8 gem_idx)
 {
 	/* a cursor p-mapper, used to iterate over p-mapperS */
 	struct ltq_pon_net_pmapper *pmapper;
@@ -3911,7 +3227,7 @@ pmapper_next(struct ltq_pon_net_pmapper *p_mapper, u8 gem_idx)
 		for (pcp = 0; pcp < DP_PMAP_PCP_NUM; pcp++) {
 			if (!pmapper->gem[pcp])
 				continue;
-			if (pmapper->gem[pcp]->gem_idx == gem_idx)
+			if (pmapper->gem[pcp]->gem_info->idx == gem_idx)
 				return pmapper;
 		}
 	}
@@ -3936,7 +3252,7 @@ ltq_pon_net_pmapper_gem_find(struct ltq_pon_net_pmapper *p_mapper, u8 gem_idx)
 			if (!pmapper->gem[i])
 				continue;
 
-			if (pmapper->gem[i]->gem_idx == gem_idx)
+			if (pmapper->gem[i]->gem_info->idx == gem_idx)
 				return pmapper->gem[i];
 		}
 	}
@@ -3947,13 +3263,16 @@ ltq_pon_net_pmapper_gem_find(struct ltq_pon_net_pmapper *p_mapper, u8 gem_idx)
 static int ltq_pon_net_dp_gem_update(struct ltq_pon_net_gem *gem,
 				     struct net_device *master)
 {
-	struct dp_subif_upd_info dp_subif = {0};
+	struct dp_subif_upd_info dp_subif = { 0 };
 	struct device *dev = gem->hw->dev;
 	int err;
 
+	netdev_dbg(gem->ndev, "%s gem idx: %d, gem id: %d\n", __func__,
+		   gem->gem_info->idx, gem->gem_info->id);
+
 	dp_subif.inst = dev->id;
 	dp_subif.dp_port = gem->hw->port_id;
-	dp_subif.subif = gem->gem_idx;
+	dp_subif.subif = gem->gem_info->idx;
 	if (master) {
 		dp_subif.new_dev = master;
 		dp_subif.new_ctp_dev = gem->ndev;
@@ -3961,13 +3280,14 @@ static int ltq_pon_net_dp_gem_update(struct ltq_pon_net_gem *gem,
 		dp_subif.new_dev = gem->ndev;
 		dp_subif.new_ctp_dev = NULL;
 	}
-	dp_subif.new_cqm_deq_idx = gem->tcont ? gem->tcont->qos_idx : 0;
+	dp_subif.new_cqm_deq_idx = gem->tcont ? gem->tcont->info->qos_idx : 0;
 	dp_subif.new_num_cqm_deq = 1;
 	dp_subif.flags = DP_F_UPDATE_NO_Q_MAP;
 
 	ltq_pon_net_dp_domain_upd(gem, &dp_subif);
 
-	dev_dbg(dev, "dp_update_subif_info(inst: %d, port: %d, subif: %d, new_dev: %s, new_ctp_dev: %s, cqm_deq_idx: %d, num_cqm_deq: %d)\n",
+	dev_dbg(dev,
+		"dp_update_subif_info(inst: %d, port: %d, subif: %d, new_dev: %s, new_ctp_dev: %s, cqm_deq_idx: %d, num_cqm_deq: %d)\n",
 		dp_subif.inst, dp_subif.dp_port, dp_subif.subif,
 		dp_subif.new_dev ? dp_subif.new_dev->name : NULL,
 		dp_subif.new_ctp_dev ? dp_subif.new_ctp_dev->name : NULL,
@@ -3987,8 +3307,7 @@ static int ltq_pon_net_dp_gem_update(struct ltq_pon_net_gem *gem,
 
 static int enhanced_pmapper_gem_add(bool force_update,
 				    struct ltq_pon_net_pmapper *pmapper,
-				    int idx,
-				    struct ltq_pon_net_gem *gem)
+				    int idx, struct ltq_pon_net_gem *gem)
 {
 	int err;
 
@@ -4003,7 +3322,7 @@ static int enhanced_pmapper_gem_add(bool force_update,
 
 	if (!force_update) {
 		/* Register only the first GEM port from the DP library */
-		if (ltq_pon_net_pmapper_gem_find(pmapper, gem->gem_idx)) {
+		if (ltq_pon_net_pmapper_gem_find(pmapper, gem->gem_info->idx)) {
 			pmapper->gem[idx] = gem;
 			return 0;
 		}
@@ -4038,7 +3357,7 @@ static int enhanced_pmapper_gem_remove(bool force_update,
 
 	if (!force_update) {
 		/* Deregister only the last GEM port from the DP library */
-		if (ltq_pon_net_pmapper_gem_find(pmapper, gem->gem_idx))
+		if (ltq_pon_net_pmapper_gem_find(pmapper, gem->gem_info->idx))
 			return 0;
 	}
 
@@ -4053,16 +3372,10 @@ static int enhanced_pmapper_gem_remove(bool force_update,
 /** Adds a mapping of a PCP value to a GEM port and also configures the default
  * PCP value to use for not VLAN tagged traffic.
  */
-#if (KERNEL_VERSION(4, 13, 0) > LINUX_VERSION_CODE)
-static int ltq_pon_net_pmapper_changelink(struct net_device *pmapper_ndev,
-					  struct nlattr *tb[],
-					  struct nlattr *data[])
-#else
 static int ltq_pon_net_pmapper_changelink(struct net_device *pmapper_ndev,
 					  struct nlattr *tb[],
 					  struct nlattr *data[],
 					  struct netlink_ext_ack *extack)
-#endif
 {
 	struct ltq_pon_net_pmapper *pmapper = netdev_priv(pmapper_ndev);
 	struct ltq_pon_net_gem *gem = NULL;
@@ -4090,16 +3403,10 @@ static int ltq_pon_net_pmapper_changelink(struct net_device *pmapper_ndev,
 	if (data[IFLA_PON_PMAPPER_DSCP]) {
 		struct nlattr *dscp[IFLA_PON_PMAPPER_DSCP_MAX + 1];
 
-#if (KERNEL_VERSION(4, 13, 0) > LINUX_VERSION_CODE)
-		err = nla_parse_nested(dscp, IFLA_PON_PMAPPER_DSCP_MAX,
-				       data[IFLA_PON_PMAPPER_DSCP],
-				       ltq_pon_net_pmapper_dscp_nl_policy);
-#else
 		err = nla_parse_nested(dscp, IFLA_PON_PMAPPER_DSCP_MAX,
 				       data[IFLA_PON_PMAPPER_DSCP],
 				       ltq_pon_net_pmapper_dscp_nl_policy,
 				       extack);
-#endif
 		if (err < 0)
 			return err;
 
@@ -4126,7 +3433,8 @@ static int ltq_pon_net_pmapper_changelink(struct net_device *pmapper_ndev,
 			gem_ndev = dev_get_by_index(pmapper->src_net,
 						    gem_ndev_idx);
 			if (!gem_ndev) {
-				netdev_err(pmapper_ndev, "Invalid/missing gem_ndev!\n");
+				netdev_err(pmapper_ndev,
+					   "Invalid/missing gem_ndev!\n");
 				return -ENODEV;
 			}
 
@@ -4134,8 +3442,10 @@ static int ltq_pon_net_pmapper_changelink(struct net_device *pmapper_ndev,
 			netdev_ops = gem_ndev->netdev_ops;
 			if (netdev_ops->ndo_open != &ltq_pon_net_gem_open) {
 				dev_put(gem_ndev);
-				netdev_err(pmapper_ndev, "Added interface (%s) is not a GEM\n",
-					   netdev_name(gem_ndev));
+				netdev_err(
+					pmapper_ndev,
+					"Added interface (%s) is not a GEM\n",
+					netdev_name(gem_ndev));
 				return -ENODEV;
 			}
 			gem = netdev_priv(gem_ndev);
@@ -4164,7 +3474,7 @@ static int ltq_pon_net_pmapper_changelink(struct net_device *pmapper_ndev,
 
 	for (i = 0; i < DP_PMAP_PCP_NUM; i++) {
 		if (pmapper->gem[i])
-			pmapper->subif[i] = pmapper->gem[i]->gem_idx;
+			pmapper->subif[i] = pmapper->gem[i]->gem_info->idx;
 		else
 			pmapper->subif[i] = DP_PMAPPER_DISCARD_CTP;
 	}
@@ -4174,18 +3484,11 @@ static int ltq_pon_net_pmapper_changelink(struct net_device *pmapper_ndev,
 }
 
 /** Creates a new IEEE 802.1p mapper on the interface given in IFLA_LINK. */
-#if (KERNEL_VERSION(4, 13, 0) > LINUX_VERSION_CODE)
-static int ltq_pon_net_pmapper_newlink(struct net *src_net,
-				       struct net_device *pmapper_ndev,
-				       struct nlattr *tb[],
-				       struct nlattr *data[])
-#else
 static int ltq_pon_net_pmapper_newlink(struct net *src_net,
 				       struct net_device *pmapper_ndev,
 				       struct nlattr *tb[],
 				       struct nlattr *data[],
 				       struct netlink_ext_ack *extack)
-#endif
 {
 	struct ltq_pon_net_pmapper *pmapper = netdev_priv(pmapper_ndev);
 	struct ltq_pon_net_hw *hw;
@@ -4205,7 +3508,9 @@ static int ltq_pon_net_pmapper_newlink(struct net *src_net,
 
 	/* check if this is a pon master device */
 	if (hw_ndev->netdev_ops->ndo_open != &ltq_pon_net_mdev_open) {
-		netdev_err(pmapper_ndev, "Invalid pmapper device != &ltq_pon_net_mdev_open\n");
+		netdev_err(
+			pmapper_ndev,
+			"Invalid pmapper device != &ltq_pon_net_mdev_open\n");
 		err = -ENODEV;
 		goto err_put_dev;
 	}
@@ -4304,8 +3609,7 @@ static void ltq_pon_net_mdev_unregister(struct net_device *hw_ndev)
  * also remove all the other interfaces.
  */
 static int ltq_pon_net_device_event(struct notifier_block *unused,
-				    unsigned long event,
-				    void *ptr)
+				    unsigned long event, void *ptr)
 {
 	struct net_device *ndev = netdev_notifier_info_to_dev(ptr);
 	const struct net_device_ops *netdev_ops;
@@ -4328,208 +3632,18 @@ static int ltq_pon_net_device_event(struct notifier_block *unused,
 	return NOTIFY_DONE;
 }
 
-static struct ltq_pon_net_tcont *ltq_pon_net_tcont_by_alloc_id_get(
-								u32 alloc_id)
-{
-	struct ltq_pon_net_tcont *tcont;
-	struct list_head *ele;
-
-	list_for_each(ele, &g_hw->tcont_list) {
-		tcont = list_entry(ele, struct ltq_pon_net_tcont, node);
-		if (tcont->alloc_id == alloc_id)
-			return tcont;
-	}
-
-	return NULL;
-}
-
-static void ltq_pon_net_tcont_gems_activate(struct ltq_pon_net_tcont *tcont)
+static void ltq_pon_net_gems_carrier_set(bool on)
 {
 	struct ltq_pon_net_gem *gem;
 	struct list_head *ele;
-
-	list_for_each(ele, &tcont->gem_list) {
-		gem = list_entry(ele, struct ltq_pon_net_gem, tcont_node);
-
-		if (!gem->alloc_link_ref)
-			ltq_pon_net_gem_fw_apply(gem, tcont);
-	}
-}
-
-static void ltq_pon_net_tcont_gems_deactivate(struct ltq_pon_net_tcont *tcont)
-{
-	struct ltq_pon_net_gem *gem;
-	struct list_head *ele;
-
-	list_for_each(ele, &tcont->gem_list) {
-		gem = list_entry(ele, struct ltq_pon_net_gem, tcont_node);
-		gem->alloc_link_ref = 0;
-	}
-}
-
-static void ltq_pon_net_alloc_id_reactivate(struct ltq_pon_net_tcont *tcont)
-{
-	int err;
-
-	err = ltq_pon_net_qos_idx_link_set(tcont->ndev);
-	if (err)
-		return;
-
-	ltq_pon_net_tcont_gems_activate(tcont);
-}
-
-static void ltq_pon_net_alloc_id_link_event(void *module, const void *msg,
-					    size_t msg_len, u8 seq)
-{
-	const struct ponfw_alloc_id_link *fw_alloc = msg;
-	struct ltq_pon_net_tcont *tcont;
-
-	if (msg_len != sizeof(*fw_alloc)) {
-		pr_err("ALLOC_ID_LINK event: wrong message size!\n");
-		return;
-	}
-
-	if (!g_hw) {
-		pr_err("ALLOC_ID_LINK event: PON master interface not available!\n");
-		return;
-	}
-
-	rtnl_lock();
-
-	pr_debug("pon_eth: received ALLOC_ID_LINK event, alloc_idx: %i, alloc_id: %i, alloc_link_ref: 0x%x, qos_idx: %i\n",
-		 fw_alloc->alloc_idx, fw_alloc->alloc_id,
-		 fw_alloc->alloc_link_ref, fw_alloc->qos_idx);
-
-	if (fw_alloc->alloc_idx && fw_alloc->qos_idx)
-		g_alloc_idx_to_qos_idx[fw_alloc->alloc_idx] = fw_alloc->qos_idx;
-
-	tcont = ltq_pon_net_tcont_by_alloc_id_get(fw_alloc->alloc_id);
-	if (!tcont) {
-		pr_debug("pon_eth: tcont netdev for alloc_id %i does not exist (yet)\n",
-			 fw_alloc->alloc_id);
-		rtnl_unlock();
-		return;
-	}
-
-	/** Attempt to reactivate US connections by requesting QOS index link
-	 *  with allocation ID again after PLOAM Allocation ID activation event.
-	 */
-	if (fw_alloc->link_status == PONFW_ALLOC_ID_LINK_LINK_STATUS_ASSIGNED) {
-		ltq_pon_net_alloc_id_reactivate(tcont);
-		rtnl_unlock();
-		return;
-	}
-
-	tcont->alloc_link_ref = fw_alloc->alloc_link_ref;
-
-	ltq_pon_net_tcont_gems_activate(tcont);
-
-	alloc_id_write_update(tcont->alloc_idx);
-
-	pr_debug("ALLOC_ID_LINK event: Alloc idx (%u) is added to counters storage\n",
-		 tcont->alloc_idx);
-
-	rtnl_unlock();
-}
-
-static void ltq_pon_net_alloc_id_clear_all(void)
-{
-	struct ltq_pon_net_tcont *tcont;
-	struct list_head *ele;
-
-	list_for_each(ele, &g_hw->tcont_list) {
-		tcont = list_entry(ele, struct ltq_pon_net_tcont, node);
-		ltq_pon_net_qos_idx_unlink(tcont->ndev, NULL);
-		ltq_pon_net_tcont_gems_deactivate(tcont);
-	}
-}
-
-static void ltq_pon_net_alloc_id_unlink_event(void *module, const void *msg,
-					      size_t msg_len, u8 seq)
-{
-	const struct ponfw_alloc_id_unlink *fw_alloc = msg;
-	struct ltq_pon_net_tcont *tcont;
-	int err;
-
-	if (msg_len != sizeof(*fw_alloc)) {
-		pr_err("ALLOC_ID_UNLINK event: wrong message size!\n");
-		return;
-	}
-
-	if (!g_hw) {
-		pr_err("ALLOC_ID_UNLINK event: PON master interface not available!\n");
-		return;
-	}
-
-	err = pon_mbox_send_ack(PONFW_ALLOC_ID_UNLINK_CMD_ID, PONFW_WRITE, seq);
-	if (err < 0) {
-		pr_err("ALLOC_ID_UNLINK event: failed to send acknowledgment\n");
-		return;
-	}
-
-	rtnl_lock();
-
-	if (fw_alloc->all) {
-		ltq_pon_net_alloc_id_clear_all();
-		rtnl_unlock();
-		return;
-	}
-
-	tcont = ltq_pon_net_tcont_by_alloc_id_get(fw_alloc->alloc_id);
-	if (!tcont) {
-		/* When we get an unlink event from the PON FW for a T-CONT
-		 * which was not configured over OMCI we still have to ack it
-		 * to the PON FW, so the PON FW does not block this index
-		 * forever. It looks like under some conditions we get a
-		 * ALLOC ID link and then unlink event over PLOAM without
-		 * any OMCI configuration for this T-CONT in between.
-		 */
-		pr_warn("pon_eth: received unexpected ALLOC_ID_UNLINK event alloc_id: %i, alloc_link_ref: 0x%x\n",
-			fw_alloc->alloc_id, fw_alloc->alloc_link_ref);
-		ltq_pon_net_ack_alloc_unlink(fw_alloc);
-		rtnl_unlock();
-		return;
-	}
-
-	ltq_pon_net_qos_idx_unlink(tcont->ndev, fw_alloc);
-
-	ltq_pon_net_tcont_gems_deactivate(tcont);
-
-	rtnl_unlock();
-}
-
-static void ltq_pon_net_o5_tconts_activate(void)
-{
-	struct ltq_pon_net_tcont *tcont;
-	struct list_head *ele;
-	int err;
-
-	list_for_each(ele, &g_hw->tcont_list) {
-		tcont = list_entry(ele, struct ltq_pon_net_tcont, node);
-		if (tcont->tcont_omci)
-			continue;
-
-		err = ltq_pon_net_qos_idx_link_set(tcont->ndev);
-		if (err)
-			continue;
-	}
-}
-
-static void ltq_pon_net_o5_gems_activate(void)
-{
-	struct ltq_pon_net_gem *gem;
-	struct list_head *ele;
-	int err;
 
 	list_for_each(ele, &g_hw->gem_list) {
 		gem = list_entry(ele, struct ltq_pon_net_gem, node);
 
-		err = ltq_pon_net_gem_fw_apply(gem, gem->tcont);
-		if (err)
-			continue;
-
-		netif_carrier_on(gem->ndev);
-		gem->valid = true;
+		if (on)
+			netif_carrier_on(gem->ndev);
+		else
+			netif_carrier_off(gem->ndev);
 	}
 }
 
@@ -4537,8 +3651,6 @@ static void ltq_pon_net_ploam_state_event(void *module, const void *msg,
 					  size_t msg_len, u8 seq)
 {
 	const struct ponfw_ploam_state *ploam = msg;
-	struct ltq_pon_net_gem *gem;
-	struct list_head *ele;
 	bool in_o5;
 	struct net_device *pon0;
 
@@ -4565,21 +3677,22 @@ static void ltq_pon_net_ploam_state_event(void *module, const void *msg,
 
 	/* We dropped out of O5 */
 	if (atomic_read(&g_hw->in_o5) && !in_o5) {
-		netif_carrier_off(pon0);
-		list_for_each(ele, &g_hw->gem_list) {
-			gem = list_entry(ele, struct ltq_pon_net_gem, node);
-			gem->valid = false;
-			netif_carrier_off(gem->ndev);
-		}
 		atomic_set(&g_hw->in_o5, in_o5);
+		netif_carrier_off(pon0);
+		netdev_dbg(pon0, "Dropped out of O5 state\n");
+		alloc_exit_operational_state();
+		gem_port_exit_operational_state();
+		ltq_pon_net_gems_carrier_set(false);
 	}
 
 	/* We just entered O5 */
 	if (!atomic_read(&g_hw->in_o5) && in_o5) {
 		atomic_set(&g_hw->in_o5, in_o5);
 		netif_carrier_on(pon0);
-		ltq_pon_net_o5_tconts_activate();
-		ltq_pon_net_o5_gems_activate();
+		netdev_dbg(pon0, "Entered O5 state\n");
+		alloc_enter_operational_state();
+		gem_port_enter_operational_state();
+		ltq_pon_net_gems_carrier_set(true);
 	}
 	rtnl_unlock();
 }

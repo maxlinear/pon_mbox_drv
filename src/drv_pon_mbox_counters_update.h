@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright (c) 2020 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2020 - 2025 MaxLinear, Inc.
  * Copyright (c) 2018 - 2020 Intel Corporation
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
@@ -53,8 +53,7 @@ void pon_mbox_gem_all_counters_update(u8 dswlch_id,
  * @return 0 for success
  *	   PONFW_NACK, PONFW_NACK_DUP, -ENOENT or -EINVAL for failure
  */
-int pon_mbox_alloc_counters_update(u8 alloc_idx,
-				   struct pon_alloc_counters *cnt,
+int pon_mbox_alloc_counters_update(u8 alloc_idx, struct pon_alloc_counters *cnt,
 				   struct pon_mbox *pon_mbox_dev);
 
 /**
@@ -162,9 +161,9 @@ int pon_mbox_twdm_lods_counters_update(u8 dswlch_id,
  * @return 0 for success
  *	   PONFW_NACK, PONFW_NACK_DUP, -ENOENT or -EINVAL for failure
  */
-int pon_mbox_twdm_optic_pl_counters_update(u8 dswlch_id,
-					   struct pon_mbox_twdm_optic_pl_counters *cnt,
-					   struct pon_mbox *pon_mbox_dev);
+int pon_mbox_twdm_optic_pl_counters_update(
+	u8 dswlch_id, struct pon_mbox_twdm_optic_pl_counters *cnt,
+	struct pon_mbox *pon_mbox_dev);
 
 /**
  * @brief Counters update function for PONFW_TWDM_TC_COUNTERS_CMD_ID
@@ -192,9 +191,9 @@ int pon_mbox_twdm_tc_counters_update(u8 dswlch_id,
  * @return 0 for success
  *	   PONFW_NACK, PONFW_NACK_DUP, -ENOENT or -EINVAL for failure
  */
-int pon_mbox_xgtc_ploam_ds_counters_update(u8 dswlch_id,
-					   struct pon_mbox_xgtc_ploam_ds_counters *cnt,
-					   struct pon_mbox *pon_mbox_dev);
+int pon_mbox_xgtc_ploam_ds_counters_update(
+	u8 dswlch_id, struct pon_mbox_xgtc_ploam_ds_counters *cnt,
+	struct pon_mbox *pon_mbox_dev);
 
 /**
  * @brief Counters update function for PONFW_GTC_PLOAM_DS_COUNTERS_CMD_ID
@@ -207,9 +206,9 @@ int pon_mbox_xgtc_ploam_ds_counters_update(u8 dswlch_id,
  * @return 0 for success
  *	   PONFW_NACK, PONFW_NACK_DUP, -ENOENT or -EINVAL for failure
  */
-int pon_mbox_gtc_ploam_ds_counters_update(u8 dswlch_id,
-					  struct pon_mbox_gtc_ploam_ds_counters *cnt,
-					  struct pon_mbox *pon_mbox_dev);
+int pon_mbox_gtc_ploam_ds_counters_update(
+	u8 dswlch_id, struct pon_mbox_gtc_ploam_ds_counters *cnt,
+	struct pon_mbox *pon_mbox_dev);
 
 /**
  * @brief Counters update function for PONFW_XGTC_PLOAM_US_COUNTERS_CMD_ID
@@ -222,9 +221,9 @@ int pon_mbox_gtc_ploam_ds_counters_update(u8 dswlch_id,
  * @return 0 for success
  *	   PONFW_NACK, PONFW_NACK_DUP, -ENOENT or -EINVAL for failure
  */
-int pon_mbox_xgtc_ploam_us_counters_update(u8 dswlch_id,
-					   struct pon_mbox_xgtc_ploam_us_counters *cnt,
-					   struct pon_mbox *pon_mbox_dev);
+int pon_mbox_xgtc_ploam_us_counters_update(
+	u8 dswlch_id, struct pon_mbox_xgtc_ploam_us_counters *cnt,
+	struct pon_mbox *pon_mbox_dev);
 
 /**
  * @brief Counters update function for PONFW_GTC_PLOAM_US_COUNTERS_CMD_ID
@@ -237,9 +236,9 @@ int pon_mbox_xgtc_ploam_us_counters_update(u8 dswlch_id,
  * @return 0 for success
  *	   PONFW_NACK, PONFW_NACK_DUP, -ENOENT or -EINVAL for failure
  */
-int pon_mbox_gtc_ploam_us_counters_update(u8 dswlch_id,
-					  struct pon_mbox_gtc_ploam_us_counters *cnt,
-					  struct pon_mbox *pon_mbox_dev);
+int pon_mbox_gtc_ploam_us_counters_update(
+	u8 dswlch_id, struct pon_mbox_gtc_ploam_us_counters *cnt,
+	struct pon_mbox *pon_mbox_dev);
 
 /*! @} */
 

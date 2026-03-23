@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2020 - 2024 MaxLinear, Inc.
+ * Copyright (c) 2020 - 2025 MaxLinear, Inc.
  * Copyright (c) 2018 - 2020 Intel Corporation
  *
  * For licensing information, see the file 'LICENSE' in the root folder of
@@ -94,9 +94,8 @@ static inline void process_acc_counter(__u64 *dst, __u64 *fw_response,
 			&last->counter, 0)
 
 static inline void process_counter_total(__u64 *dst, __u64 *fw_response,
-				__u64 *total,
-				__u64 *last,
-				__u64 max_bits)
+					 __u64 *total, __u64 *last,
+					 __u64 max_bits)
 {
 	__u64 tmp = *total;
 
@@ -262,9 +261,9 @@ struct pon_mbox_gtc_counters
 
 	mutex_lock(&state->lock);
 
-	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC)
+	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC) {
 		ptr = &state->storage.gpon_total.gtc_counters;
-	else {
+	} else {
 		if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_CURR)
 			twdm_dswlch_id = state->twdm_ds_idx;
 
@@ -318,9 +317,9 @@ struct pon_mbox_xgtc_counters
 
 	mutex_lock(&state->lock);
 
-	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC)
+	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC) {
 		ptr = &state->storage.gpon_total.xgtc_counters;
-	else {
+	} else {
 		if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_CURR)
 			twdm_dswlch_id = state->twdm_ds_idx;
 
@@ -400,9 +399,9 @@ struct pon_mbox_gem_port_counters
 		return NULL;
 	}
 
-	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC)
+	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC) {
 		ptr = &state->storage.gpon_total.gem_port_counters[index];
-	else {
+	} else {
 		if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_CURR) {
 			dswlch_id = state->twdm_ds_idx;
 			uswlch_id = state->twdm_us_idx;
@@ -716,9 +715,9 @@ struct pon_mbox_twdm_lods_counters
 
 	mutex_lock(&state->lock);
 
-	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC)
+	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC) {
 		ptr = &state->storage.gpon_total.twdm_lods_counter;
-	else {
+	} else {
 		if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_CURR)
 			twdm_dswlch_id = state->twdm_ds_idx;
 
@@ -765,9 +764,9 @@ struct pon_mbox_twdm_optic_pl_counters
 
 	mutex_lock(&state->lock);
 
-	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC)
+	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC) {
 		ptr = &state->storage.gpon_total.twdm_optic_pl_counter;
-	else {
+	} else {
 		if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_CURR)
 			twdm_dswlch_id = state->twdm_ds_idx;
 
@@ -811,9 +810,9 @@ struct pon_mbox_twdm_tc_counters
 
 	mutex_lock(&state->lock);
 
-	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC)
+	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC) {
 		ptr = &state->storage.gpon_total.twdm_tc_counter;
-	else {
+	} else {
 		if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_CURR)
 			twdm_dswlch_id = state->twdm_ds_idx;
 
@@ -856,9 +855,9 @@ struct pon_mbox_xgtc_ploam_ds_counters
 
 	mutex_lock(&state->lock);
 
-	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC)
+	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC) {
 		ptr = &state->storage.gpon_total.xgtc_ploam_ds_counter;
-	else {
+	} else {
 		if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_CURR)
 			twdm_dswlch_id = state->twdm_ds_idx;
 
@@ -982,9 +981,9 @@ struct pon_mbox_xgtc_ploam_us_counters
 
 	mutex_lock(&state->lock);
 
-	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC)
+	if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_ACC) {
 		ptr = &state->storage.gpon_total.xgtc_ploam_us_counter;
-	else {
+	} else {
 		if (twdm_dswlch_id == PON_MBOX_D_DSWLCH_ID_CURR)
 			twdm_dswlch_id = state->twdm_ds_idx;
 
@@ -1106,8 +1105,7 @@ void pon_mbox_cnt_release(void *counter)
 void pon_mbox_cnt_reset(struct counters_state *state)
 {
 	mutex_lock(&state->storage.tables_lock);
-	memset(&state->storage.gpon, 0,
-			sizeof(state->storage.gpon));
+	memset(&state->storage.gpon, 0, sizeof(state->storage.gpon));
 	mutex_unlock(&state->storage.tables_lock);
 
 	mutex_lock(&state->lock);
@@ -1179,7 +1177,6 @@ int pon_mbox_used_alloc_ids_get(u8 *alloc_id_used,
 
 	return j;
 }
-
 
 void pon_mbox_last_update_get(struct counters_last_update *last_update,
 			      struct counters_state *state)

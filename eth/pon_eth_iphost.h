@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- *  Copyright (c) 2020 - 2022 MaxLinear, Inc.
+ *  Copyright (c) 2020 - 2025 MaxLinear, Inc.
  *  Copyright (C) 2020 Intel Corporation
  *
  *  This program is free software; you can redistribute it and/or modify it
@@ -49,8 +49,7 @@ int pon_eth_iphost_rtnl_link_register(void);
 void pon_eth_iphost_rtnl_link_unregister(void);
 
 /** Deletes IP Host interface */
-void iphost_dellink(struct net_device *iphost_ndev,
-		    struct list_head *head);
+void iphost_dellink(struct net_device *iphost_ndev, struct list_head *head);
 
 /** Register IP Host port */
 int ltq_pon_iphost_port_register(struct ltq_pon_net_hw *hw);

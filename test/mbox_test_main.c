@@ -6,15 +6,14 @@
 #include <pon/pon_mbox_ikm.h>
 #include <pon/pon_ip_msg.h>
 
-static ssize_t version_show(struct kobject *kobj,
-		struct kobj_attribute *attr, char *buf)
+static ssize_t version_show(struct kobject *kobj, struct kobj_attribute *attr,
+			    char *buf)
 {
 	struct ponfw_version fw_out;
 	int res = 0;
 
-	res = pon_mbox_send(PONFW_VERSION_CMD_ID, PONFW_READ,
-			NULL, 0,
-			&fw_out, sizeof(fw_out));
+	res = pon_mbox_send(PONFW_VERSION_CMD_ID, PONFW_READ, NULL, 0, &fw_out,
+			    sizeof(fw_out));
 
 	if (res < 0) {
 		pr_info("Unable to send message to mbox, ret: %d\n", res);
@@ -22,8 +21,8 @@ static ssize_t version_show(struct kobject *kobj,
 	}
 
 	if (res != sizeof(fw_out)) {
-		pr_info("Message smaller (%i) than expected: %zu\n",
-				res, sizeof(fw_out));
+		pr_info("Message smaller (%i) than expected: %zu\n", res,
+			sizeof(fw_out));
 		return -1;
 	}
 
@@ -48,8 +47,7 @@ static int __init mbox_test_init(void)
 		return -1;
 	}
 
-	res = sysfs_create_file(sysfs_module_root,
-				     &pon_version_attribute.attr);
+	res = sysfs_create_file(sysfs_module_root, &pon_version_attribute.attr);
 	if (res < 0) {
 		pr_info("Failed to create sysfs entry (%d)\n", res);
 		return res;

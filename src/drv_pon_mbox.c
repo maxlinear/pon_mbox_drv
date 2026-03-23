@@ -26,6 +26,7 @@
 /* define prefix for pr functions */
 #define pr_fmt(fmt) DRV_NAME ": " fmt
 
+#include <linux/bits.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -48,6 +49,7 @@
 #include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/spi/spi.h>
+#include <linux/sys_soc.h>
 #include <linux/time64.h>
 #include <linux/uidgid.h>
 #include <linux/version.h>
@@ -57,13 +59,10 @@
 #include <net/genetlink.h>
 #include <net/sock.h>
 
-#if (KERNEL_VERSION(4, 10, 0) < LINUX_VERSION_CODE)
-/* In new kernels, "soc_device_match" is available.
- * Use that to find SoC revision.
- */
-#include <linux/sys_soc.h>
 #include <pon/pon_ip_msg.h>
+#include <pon/pon_mbox_ikm.h>
 
+/* Define lookup table to find SoC revision. */
 #define PRX_REV_B(x, d) \
 	{ .family = "PRX", .revision = "B"#x, .data = (void *)d }
 #define URX_REV_B(x, d) \
@@ -93,23 +92,6 @@ static unsigned int get_soc_rev(void)
 	/* Return a dummy/default value, if nothing was found. */
 	return 0;
 }
-#elif defined(CONFIG_LANTIQ) && defined(CONFIG_SOC_GRX500)
-/* The function "ltq_get_soc_rev" is only available for MIPS (PRX) when using
- * the "lantiq" target (in kernel 4.9).
- * ltq_get_soc_rev returns for PRX already the values as defined by
- * PONFW_HW_VERSION_VERSION_FLM_B0_FLM_B1 to
- * PONFW_HW_VERSION_VERSION_FLM_B3.
- */
-#include <lantiq.h> /* for ltq_get_soc_rev */
-#define get_soc_rev ltq_get_soc_rev
-
-#else
-/* Dummy implementation for other platforms (if there are any left) */
-static inline unsigned int get_soc_rev(void)
-{
-	return 0;
-}
-#endif
 
 #ifdef DEBUG_MBOX_RESPONSE_TIME
 #include <linux/jiffies.h>
@@ -135,8 +117,9 @@ static inline unsigned int get_soc_rev(void)
  */
 
 /** what string support, version string */
-const char pon_mbox_drv_whatversion[] = "@(#)MaxLinear PON Mailbox driver, version "
-					 __stringify(PACKAGE_VERSION);
+static const char pon_mbox_drv_whatversion[] __used =
+	"@(#)MaxLinear PON Mailbox driver, version "
+	__stringify(PACKAGE_VERSION);
 
 #define CHIPTOP_IFMUX_CFG				0x120
 #define SECTOP_PON_PPM					0x148
@@ -153,6 +136,8 @@ const char pon_mbox_drv_whatversion[] = "@(#)MaxLinear PON Mailbox driver, versi
 #define PON_MBOX_FW_GPON_NAME_URX_B "urx_gpon_fw_b.bin"
 /** FW supporting G-PON on URX800 type C */
 #define PON_MBOX_FW_GPON_NAME_URX_C "urx_gpon_fw_c.bin"
+/** FW supporting G-PON on TOPAZ type U */
+#define PON_MBOX_FW_GPON_NAME_TPZ "tpz_gpon_fw.bin"
 /** FW supporting XG-SPON, XG-PON and NG-PON2 on type A */
 #define PON_MBOX_FW_XPON_NAME_A "prx_xpon_fw_a.bin"
 /** FW supporting XG-SPON, XG-PON and NG-PON2 on type B */
@@ -163,6 +148,8 @@ const char pon_mbox_drv_whatversion[] = "@(#)MaxLinear PON Mailbox driver, versi
 #define PON_MBOX_FW_XPON_NAME_URX_B "urx_xpon_fw_b.bin"
 /** FW supporting XGS-PON, XG-PON and NG-PON2 on URX800 type C */
 #define PON_MBOX_FW_XPON_NAME_URX_C "urx_xpon_fw_c.bin"
+/** FW supporting XGS-PON, XG-PON and NG-PON2 on TOPAZ type U */
+#define PON_MBOX_FW_XPON_NAME_TPZ "tpz_xpon_fw.bin"
 
 /** Maximum number of concurrent alarms.
  *  If number of reported alarms is bigger than 32 it means that system is in
@@ -185,27 +172,27 @@ const char pon_mbox_drv_whatversion[] = "@(#)MaxLinear PON Mailbox driver, versi
 /** Header used for SPI communication */
 #ifdef __LITTLE_ENDIAN_BITFIELD
 struct pon_mbox_spih {
-	u32	len:15;
-	u32	autoinc:1;
-	u32	write:1;
-	u32	read:1;
-	u32	addr:14;
-} __attribute__((packed));
+	u32 len : 15;
+	u32 autoinc : 1;
+	u32 write : 1;
+	u32 read : 1;
+	u32 addr : 14;
+} __packed;
 #elif defined(__BIG_ENDIAN_BITFIELD)
 struct pon_mbox_spih {
-	u32	addr:14;
-	u32	read:1;
-	u32	write:1;
-	u32	autoinc:1;
-	u32	len:15;
-} __attribute__((packed));
+	u32 addr : 14;
+	u32 read : 1;
+	u32 write : 1;
+	u32 autoinc : 1;
+	u32 len : 15;
+} __packed;
 #endif
 
 /** SPI header union */
 union pon_mbox_spi_header {
 	struct pon_mbox_spih field;
 	u32 full;
-}  __attribute__((packed));
+} __packed;
 
 /** Flag definitions used in conjunction with PON Host register write
  *  functions. Used to flag the action to be performed and trigger
@@ -251,7 +238,7 @@ static unsigned long debug_irq_jiffies_start;
 static unsigned long counters_update_timer = PON_COUNTERS_DEFAULT_UPDATE_TIME;
 module_param(counters_update_timer, ulong, 0644);
 MODULE_PARM_DESC(counters_update_timer,
-		 "time in seconds between counter updates");
+		 "time in seconds between counter updates, 0 - deactivate");
 
 #if (KERNEL_VERSION(6, 2, 0) > LINUX_VERSION_CODE)
 /* in 6.2 "genl_split_ops" was added, fallback to "genl_ops" for older kernel */
@@ -321,40 +308,38 @@ static const struct nla_policy user_mngmt_genlt_policy[PON_MBOX_A_MAX + 1] = {
 	[PON_MBOX_A_USER_MNGMT_USER] = { .type = NLA_U32 },
 };
 
-static const struct nla_policy empty_read_policy[PON_MBOX_A_MAX + 1]
-	= {
-};
-static const struct nla_policy serdes_config_genl_policy[PON_MBOX_SRDS_MAX + 1]
-	= {
-	[PON_MBOX_SRDS_TX_EQ_MAIN] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_TX_EQ_POST] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_TX_EQ_PRE] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_VBOOST_EN] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_VBOOST_LVL] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_IBOOST_LVL] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_ADAPT_AFE_EN] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_ADAPT_DFE_EN] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_ADAPT_CONT] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_ADAPT_EN] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_EQ_ATT_LVL] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_EQ_ADAPT_MODE] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_EQ_ADAPT_SEL] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_EQ_CTLE_BOOST] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_VCO_TEMP_COMP_EN] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_VCO_STEP_CTRL] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_VCO_FRQBAND] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_MISC] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_DELTA_IQ] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_RX_MARGIN_IQ] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_EQ_CTLE_POLE] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_EQ_DFE_TAP1] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_EQ_DFE_BYPASS] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_EQ_VGA1_GAIN] = { .type = NLA_U8 },
-	[PON_MBOX_SRDS_EQ_VGA2_GAIN] = { .type = NLA_U8 },
-};
+static const struct nla_policy empty_read_policy[PON_MBOX_A_MAX + 1] = {};
 
-static const char *serdes_config_params[PON_MBOX_SRDS_MAX + 1]
-	= {
+static const struct nla_policy
+	serdes_config_genl_policy[PON_MBOX_SRDS_MAX + 1] = {
+		[PON_MBOX_SRDS_TX_EQ_MAIN] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_TX_EQ_POST] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_TX_EQ_PRE] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_VBOOST_EN] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_VBOOST_LVL] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_IBOOST_LVL] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_ADAPT_AFE_EN] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_ADAPT_DFE_EN] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_ADAPT_CONT] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_ADAPT_EN] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_EQ_ATT_LVL] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_EQ_ADAPT_MODE] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_EQ_ADAPT_SEL] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_EQ_CTLE_BOOST] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_VCO_TEMP_COMP_EN] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_VCO_STEP_CTRL] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_VCO_FRQBAND] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_MISC] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_DELTA_IQ] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_RX_MARGIN_IQ] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_EQ_CTLE_POLE] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_EQ_DFE_TAP1] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_EQ_DFE_BYPASS] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_EQ_VGA1_GAIN] = { .type = NLA_U8 },
+		[PON_MBOX_SRDS_EQ_VGA2_GAIN] = { .type = NLA_U8 },
+	};
+
+static const char *serdes_config_params[PON_MBOX_SRDS_MAX + 1] = {
 	[PON_MBOX_SRDS_TX_EQ_MAIN] = "tx_eq_main",
 	[PON_MBOX_SRDS_TX_EQ_POST] = "tx_eq_post",
 	[PON_MBOX_SRDS_TX_EQ_PRE] = "tx_eq_pre",
@@ -383,8 +368,8 @@ static const char *serdes_config_params[PON_MBOX_SRDS_MAX + 1]
 };
 
 static const struct nla_policy lt_config_genl_policy[PON_MBOX_A_MAX + 1] = {
-	[PON_MBOX_LT_MODE] =  { .type = NLA_U8 },
-	[PON_MBOX_LT_POWER_SAVE] =  { .type = NLA_U8 },
+	[PON_MBOX_LT_MODE] = { .type = NLA_U8 },
+	[PON_MBOX_LT_POWER_SAVE] = { .type = NLA_U8 },
 };
 
 static const struct nla_policy iop_config_genl_policy[PON_MBOX_A_MAX + 1] = {
@@ -402,22 +387,24 @@ static const struct nla_policy pon_mode_genl_policy[PON_MBOX_A_MAX + 1] = {
 
 static const struct nla_policy
 	cnt_twdm_wlchid_genl_policy[PON_MBOX_CNT_TWDM_WLCHID_MAX + 1] = {
-	[PON_MBOX_CNT_TWDM_WLCHID_DS] = { .type = NLA_U8 },
-	[PON_MBOX_CNT_TWDM_WLCHID_US] = { .type = NLA_U8 },
-};
+		[PON_MBOX_CNT_TWDM_WLCHID_DS] = { .type = NLA_U8 },
+		[PON_MBOX_CNT_TWDM_WLCHID_US] = { .type = NLA_U8 },
+	};
 
 /** NetLink Multicast group to send events to. */
 static struct genl_multicast_group pon_mbox_genl_groups[] = {
-	{ .name = "msg", },
+	{
+		.name = "msg",
+	},
 };
 
 /** User permission list for each command group */
 static struct pon_mbox_user_perm pon_mbox_perm_list[] = {
 	[PON_MBOX_PERM_SYNCE] = {
-		.uid_list[0 ... PON_MBOX_MAX_CMD_USERS-1] = INVALID_UID
+		.uid_list[0 ... PON_MBOX_MAX_CMD_USERS - 1] = INVALID_UID
 	},
 	[PON_MBOX_PERM_BC_KEY] = {
-		.uid_list[0 ... PON_MBOX_MAX_CMD_USERS-1] = INVALID_UID
+		.uid_list[0 ... PON_MBOX_MAX_CMD_USERS - 1] = INVALID_UID
 	},
 };
 
@@ -624,7 +611,7 @@ static ssize_t pon_mbox_write_msg(struct pon_mbox *pon, const char *buf,
 				seq = i % ARRAY_SIZE(pon->pending);
 				pending = &pon->pending[seq];
 				if (pending->in_use &&
-				    (pending->timestamp < timestamp)) {
+				    pending->timestamp < timestamp) {
 					timestamp = pending->timestamp;
 					oldest_idx = seq;
 				}
@@ -632,7 +619,7 @@ static ssize_t pon_mbox_write_msg(struct pon_mbox *pon, const char *buf,
 					break;
 			}
 
-			if (pending == NULL) {
+			if (!pending) {
 				ret = -ENOMEM;
 				goto out;
 			}
@@ -654,7 +641,7 @@ static ssize_t pon_mbox_write_msg(struct pon_mbox *pon, const char *buf,
 					goto out;
 				}
 				dev_err(pon->dev,
-				   "no free structure found - can't write message, freeing oldest entry\n");
+					"no free structure found - can't write message, freeing oldest entry\n");
 				pon_mbox_release_pending_or_complete(
 						&pon->pending[oldest_idx],
 						-ENOMEM);
@@ -742,8 +729,8 @@ static ssize_t pon_mbox_write_msg(struct pon_mbox *pon, const char *buf,
 		read_write, command, ack, src, seq, len);
 
 	if (len > 0)
-		print_hex_dump_debug("data: ", DUMP_PREFIX_OFFSET, 16,
-					     1, buf, len, false);
+		print_hex_dump_debug("data: ", DUMP_PREFIX_OFFSET, 16, 1, buf,
+				     len, false);
 
 	ret = pon->write(pon, PON_MBOX_DATA1, &header, sizeof(header),
 			 PON_WR_FLAG_REGULAR);
@@ -766,7 +753,7 @@ static ssize_t pon_mbox_write_msg(struct pon_mbox *pon, const char *buf,
 
 	/* tell the hardware that the new message was written */
 	ret = pon_mbox_write32(pon, PON_MBOX_CMD,
-		PON_MBOX_CMD_X1 | PON_MBOX_CMD_EOM);
+			       PON_MBOX_CMD_X1 | PON_MBOX_CMD_EOM);
 
 out:
 	mutex_unlock(&pon->irq_lock);
@@ -787,7 +774,6 @@ static int pon_mbox_genl_generate_fake_event(struct pon_fake_event *event,
 	if (msg_len < sizeof(*event))
 		return -EINVAL;
 
-
 	if (!event || msg_len < PON_FEVT_LEN_GET(*event))
 		return -EINVAL;
 
@@ -804,7 +790,7 @@ static int pon_mbox_genl_generate_fake_event(struct pon_fake_event *event,
 }
 
 ssize_t pon_mbox_send(unsigned int cmd_id, unsigned int rw,
-		      void *input, size_t input_size,
+		      const void *input, size_t input_size,
 		      void *output, size_t output_size)
 {
 	struct pon_mbox *pon = pon_mbox_dev;
@@ -818,9 +804,9 @@ ssize_t pon_mbox_send(unsigned int cmd_id, unsigned int rw,
 	}
 
 	/* send message */
-	len = pon_mbox_write_msg(pon, input, input_size, rw, cmd_id,
-		PONFW_CMD, 0, 0, NULL, PON_MBOX_MSG_ORIGIN_KERNEL,
-		&pending, output, output_size);
+	len = pon_mbox_write_msg(pon, input, input_size, rw, cmd_id, PONFW_CMD,
+				 0, 0, NULL, PON_MBOX_MSG_ORIGIN_KERNEL,
+				 &pending, output, output_size);
 
 	if (len < 0)
 		return len;
@@ -1013,9 +999,9 @@ static int pon_mbox_genl_send(struct sk_buff *skb, struct genl_info *info)
 		 * via unicast set in header.src.
 		 */
 		ret = pon_mbox_send_nl_response(pon, fake_event_msg_snd_portid,
-						 fake_event_msg_snd_seq,
-						 &init_net, &header,
-						 (char *)buf_tmp, 0);
+						fake_event_msg_snd_seq,
+						&init_net, &header,
+						(char *)buf_tmp, 0);
 
 		kfree(buf_tmp);
 
@@ -1187,10 +1173,10 @@ static int pon_mbox_genl_gem_all_counters(struct sk_buff *skb,
 	CHECK_FOR_NETLINK_RESPONSE_ERR(pon, err);
 	return err;
 }
+
 /* Encode alloc counters in netlink message as a nested attribute */
-static int alloc_counters_nl_encode(struct sk_buff *skb,
-				       void *buffer,
-				       unsigned int size)
+static int alloc_counters_nl_encode(struct sk_buff *skb, void *buffer,
+				    unsigned int size)
 {
 	struct pon_alloc_counters *pon_output = buffer;
 	struct nlattr *cnt = nla_nest_start(skb, PON_MBOX_A_CNT);
@@ -1277,7 +1263,7 @@ static int alloc_lost_counters_nl_encode(struct sk_buff *skb,
 	}
 	for (i = 0; i < ARRAY_SIZE(pon_output->disc); ++i) {
 		CNT_ENCODE_U64(ALLOC_DISCARD_ITEM, disc[i],
-			ALLOC_DISCARD_ITEM_PAD);
+			       ALLOC_DISCARD_ITEM_PAD);
 	}
 	nla_nest_end(skb, attr);
 
@@ -1288,7 +1274,7 @@ static int alloc_lost_counters_nl_encode(struct sk_buff *skb,
 	}
 	for (i = 0; i < ARRAY_SIZE(pon_output->rule); ++i) {
 		CNT_ENCODE_U64(ALLOC_DISCARD_ITEM, rule[i],
-			ALLOC_DISCARD_ITEM_PAD);
+			       ALLOC_DISCARD_ITEM_PAD);
 	}
 	nla_nest_end(skb, attr);
 
@@ -1355,9 +1341,9 @@ static int gtc_counters_nl_encode(struct sk_buff *skb,
 	CNT_ENCODE_U64(GTC_DISC_GEM_FRAMES, disc_gem_frames, GTC_PAD);
 	CNT_ENCODE_U64(GTC_GEM_HEC_ERRORS_CORR, gem_hec_errors_corr, GTC_PAD);
 	CNT_ENCODE_U64(GTC_GEM_HEC_ERRORS_UNCORR, gem_hec_errors_uncorr,
-		GTC_PAD);
+		       GTC_PAD);
 	CNT_ENCODE_U64(GTC_BWMAP_HEC_ERRORS_CORR, bwmap_hec_errors_corr,
-		GTC_PAD);
+		       GTC_PAD);
 	CNT_ENCODE_U64(GTC_BYTES_CORR, bytes_corr, GTC_PAD);
 	CNT_ENCODE_U64(GTC_FEC_CODEWORDS_CORR, fec_codewords_corr, GTC_PAD);
 	CNT_ENCODE_U64(GTC_FEC_COREWORDS_UNCORR, fec_codewords_uncorr, GTC_PAD);
@@ -1421,9 +1407,8 @@ static int pon_mbox_genl_gtc_counters(struct sk_buff *skb,
 }
 
 /* Encode gtc counters in netlink message as a nested attribute */
-static int xgtc_counters_nl_encode(struct sk_buff *skb,
-				  void *buffer,
-				  unsigned int size)
+static int xgtc_counters_nl_encode(struct sk_buff *skb, void *buffer,
+				   unsigned int size)
 {
 	struct pon_mbox_xgtc_counters *pon_output = buffer;
 	struct nlattr *cnt = nla_nest_start(skb, PON_MBOX_A_CNT);
@@ -1899,18 +1884,17 @@ static int pon_mbox_genl_twdm_optic_pl_counters(struct sk_buff *skb,
 		(sizeof(struct pon_mbox_twdm_optic_pl_counters)
 			/ PON_MBOX_BYTES_PER_WORD) : 0;
 
-	err = pon_mbox_send_nl_response_encoded(pon, info->snd_portid,
-			info->snd_seq,	genl_info_net(info), &header,
-			(void *)&pon_output, 0,
-			twdm_optic_pl_counters_nl_encode);
+	err = pon_mbox_send_nl_response_encoded(
+		pon, info->snd_portid, info->snd_seq, genl_info_net(info),
+		&header, (void *)&pon_output, 0,
+		twdm_optic_pl_counters_nl_encode);
 	CHECK_FOR_NETLINK_RESPONSE_ERR(pon, err);
 
 	return err;
 }
 
 /* Encode gtc counters in netlink message as a nested attribute */
-static int twdm_tc_counters_nl_encode(struct sk_buff *skb,
-				      void *buffer,
+static int twdm_tc_counters_nl_encode(struct sk_buff *skb, void *buffer,
 				      unsigned int size)
 {
 	struct pon_mbox_twdm_tc_counters *pon_output = buffer;
@@ -1928,10 +1912,8 @@ static int twdm_tc_counters_nl_encode(struct sk_buff *skb,
 		err = 1;
 		goto cancel;
 	}
-	for (i = 0; i < ARRAY_SIZE(pon_output->tc_); ++i) {
-		CNT_ENCODE_U64(TWDM_TC_ITEM, tc_[i],
-			TWDM_TC_ITEM_PAD);
-	}
+	for (i = 0; i < ARRAY_SIZE(pon_output->tc_); ++i)
+		CNT_ENCODE_U64(TWDM_TC_ITEM, tc_[i], TWDM_TC_ITEM_PAD);
 	nla_nest_end(skb, attr);
 
 	nla_nest_end(skb, cnt);
@@ -1978,10 +1960,9 @@ static int pon_mbox_genl_twdm_tc_counters(struct sk_buff *skb,
 		(sizeof(struct pon_mbox_twdm_tc_counters)
 			/ PON_MBOX_BYTES_PER_WORD) : 0;
 
-	err = pon_mbox_send_nl_response_encoded(pon, info->snd_portid,
-			info->snd_seq,	genl_info_net(info), &header,
-			(void *)&pon_output, 0,
-			twdm_tc_counters_nl_encode);
+	err = pon_mbox_send_nl_response_encoded(
+		pon, info->snd_portid, info->snd_seq, genl_info_net(info),
+		&header, (void *)&pon_output, 0, twdm_tc_counters_nl_encode);
 	CHECK_FOR_NETLINK_RESPONSE_ERR(pon, err);
 
 	return err;
@@ -2024,10 +2005,10 @@ static int pon_mbox_genl_xgtc_ploam_ds_counters(struct sk_buff *skb,
 		(sizeof(struct pon_mbox_xgtc_ploam_ds_counters)
 			/ PON_MBOX_BYTES_PER_WORD) : 0;
 
-	err = pon_mbox_send_nl_response_encoded(pon, info->snd_portid,
-			info->snd_seq,	genl_info_net(info), &header,
-			(void *)&pon_output, 0,
-			xgtc_ploam_ds_counters_nl_encode);
+	err = pon_mbox_send_nl_response_encoded(
+		pon, info->snd_portid, info->snd_seq, genl_info_net(info),
+		&header, (void *)&pon_output, 0,
+		xgtc_ploam_ds_counters_nl_encode);
 	CHECK_FOR_NETLINK_RESPONSE_ERR(pon, err);
 
 	return err;
@@ -2070,10 +2051,10 @@ static int pon_mbox_genl_gtc_ploam_ds_counters(struct sk_buff *skb,
 		(sizeof(struct pon_mbox_gtc_ploam_ds_counters)
 			/ PON_MBOX_BYTES_PER_WORD) : 0;
 
-	err = pon_mbox_send_nl_response_encoded(pon, info->snd_portid,
-			info->snd_seq,	genl_info_net(info), &header,
-			(void *)&pon_output, 0,
-			gtc_ploam_ds_counters_nl_encode);
+	err = pon_mbox_send_nl_response_encoded(
+		pon, info->snd_portid, info->snd_seq, genl_info_net(info),
+		&header, (void *)&pon_output, 0,
+		gtc_ploam_ds_counters_nl_encode);
 	CHECK_FOR_NETLINK_RESPONSE_ERR(pon, err);
 
 	return err;
@@ -2142,10 +2123,10 @@ static int pon_mbox_genl_xgtc_ploam_us_counters(struct sk_buff *skb,
 		(sizeof(struct pon_mbox_xgtc_ploam_us_counters)
 			/ PON_MBOX_BYTES_PER_WORD) : 0;
 
-	err = pon_mbox_send_nl_response_encoded(pon, info->snd_portid,
-			info->snd_seq,	genl_info_net(info), &header,
-			(void *)&pon_output, 0,
-			xgtc_ploam_us_counters_nl_encode);
+	err = pon_mbox_send_nl_response_encoded(
+		pon, info->snd_portid, info->snd_seq, genl_info_net(info),
+		&header, (void *)&pon_output, 0,
+		xgtc_ploam_us_counters_nl_encode);
 	CHECK_FOR_NETLINK_RESPONSE_ERR(pon, err);
 
 	return err;
@@ -2188,10 +2169,10 @@ static int pon_mbox_genl_gtc_ploam_us_counters(struct sk_buff *skb,
 		(sizeof(struct pon_mbox_gtc_ploam_us_counters)
 			/ PON_MBOX_BYTES_PER_WORD) : 0;
 
-	err = pon_mbox_send_nl_response_encoded(pon, info->snd_portid,
-			info->snd_seq,	genl_info_net(info), &header,
-			(void *)&pon_output, 0,
-			gtc_ploam_us_counters_nl_encode);
+	err = pon_mbox_send_nl_response_encoded(
+		pon, info->snd_portid, info->snd_seq, genl_info_net(info),
+		&header, (void *)&pon_output, 0,
+		gtc_ploam_us_counters_nl_encode);
 	CHECK_FOR_NETLINK_RESPONSE_ERR(pon, err);
 
 	return err;
@@ -2330,7 +2311,14 @@ static const char *pon_mbox_get_fw_filename(struct pon_mbox *pon,
 		return NULL;
 	}
 
-	if (pon->hw_ver >= PON_MBOX_HW_VER_URX_C_TYPE) {
+	if (pon->hw_ver >= PON_MBOX_HW_VER_TPZ_EMU_TYPE) {
+		/* Change to TPZ specific FW when it comes,
+		   until then use URX-B FW for initial test phase */
+		if (gpon)
+			return PON_MBOX_FW_GPON_NAME_URX_B;
+		else
+			return PON_MBOX_FW_XPON_NAME_URX_B;
+	} else if (pon->hw_ver >= PON_MBOX_HW_VER_URX_C_TYPE) {
 		if (gpon)
 			return PON_MBOX_FW_GPON_NAME_URX_C;
 		else
@@ -2499,7 +2487,7 @@ static int pon_mbox_genl_reset_full_nl(struct sk_buff *skb,
 }
 
 static int pon_mbox_genl_link_disable(struct sk_buff *skb,
-				    struct genl_info *info)
+				      struct genl_info *info)
 {
 	struct pon_mbox *pon = pon_mbox_dev;
 	int ret;
@@ -2540,168 +2528,197 @@ static struct genl_split_ops pon_mbox_genl_ops[] = {
 		.cmd = PON_MBOX_C_MSG,
 		.policy = pon_mbox_genl_policy,
 		.doit = pon_mbox_genl_send,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_RESET,
 		.policy = pon_mbox_genl_policy,
 		.doit = pon_mbox_genl_reset,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_REG_READ,
 		.policy = pon_mbox_genl_policy,
 		.doit = pon_mbox_genl_reg_read,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_REG_WRITE,
 		.policy = pon_mbox_genl_policy,
 		.doit = pon_mbox_genl_reg_write,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_RESET_FULL,
 		.policy = pon_mbox_genl_policy,
 		.doit = pon_mbox_genl_reset_full_nl,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_LINK_DISABLE,
 		.policy = pon_mbox_genl_policy,
 		.doit = pon_mbox_genl_link_disable,
-	},
-	{
-		.cmd = PON_MBOX_C_USER_MNGMT,
-		.policy = user_mngmt_genlt_policy,
-		.doit = pon_mbox_user_mngmt,
-	},
-	{
-		.cmd = PON_MBOX_C_GEM_PORT_COUNTERS,
-		.policy = counters_genl_policy,
-		.doit = pon_mbox_genl_gem_port_counters,
-	},
-	{
-		.cmd = PON_MBOX_C_GEM_ALL_COUNTERS,
-		.policy = counters_genl_policy,
-		.doit = pon_mbox_genl_gem_all_counters,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_ALLOC_ID_COUNTERS,
 		.policy = counters_genl_policy,
 		.doit = pon_mbox_genl_alloc_counters,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_ALLOC_LOST_COUNTERS,
 		.policy = counters_genl_policy,
 		.doit = pon_mbox_genl_alloc_lost_counters,
+		.flags = GENL_CMD_CAP_DO,
+	},
+	{
+		.cmd = PON_MBOX_C_GEM_PORT_COUNTERS,
+		.policy = counters_genl_policy,
+		.doit = pon_mbox_genl_gem_port_counters,
+		.flags = GENL_CMD_CAP_DO,
+	},
+	{
+		.cmd = PON_MBOX_C_GEM_ALL_COUNTERS,
+		.policy = counters_genl_policy,
+		.doit = pon_mbox_genl_gem_all_counters,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_GTC_COUNTERS,
 		.policy = counters_genl_policy,
 		.doit = pon_mbox_genl_gtc_counters,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_XGTC_COUNTERS,
 		.policy = counters_genl_policy,
 		.doit = pon_mbox_genl_xgtc_counters,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_ETH_RX_COUNTERS,
 		.policy = counters_genl_policy,
 		.doit = pon_mbox_genl_rx_eth_counters,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_ETH_TX_COUNTERS,
 		.policy = counters_genl_policy,
 		.doit = pon_mbox_genl_tx_eth_counters,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_LT_CONFIG,
 		.policy = lt_config_genl_policy,
 		.doit = pon_mbox_genl_lt_config,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_SRDS_CONFIG,
 		.policy = serdes_config_genl_policy,
 		.doit = pon_mbox_genl_serdes_config,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_SRDS_CONFIG_READ,
 		.policy = empty_read_policy,
 		.doit = pon_mbox_genl_serdes_config_read,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_IOP_CONFIG,
 		.policy = iop_config_genl_policy,
 		.doit = pon_mbox_genl_iop_config,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_PIN_CONFIG,
 		.policy = pin_config_genl_policy,
 		.doit = pon_mbox_genl_pin_config,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_UART_CONFIG,
 		.policy = uart_config_genl_policy,
 		.doit = pon_mbox_genl_uart_config,
+		.flags = GENL_CMD_CAP_DO,
+	},
+	{
+		.cmd = PON_MBOX_C_USER_MNGMT,
+		.policy = user_mngmt_genlt_policy,
+		.doit = pon_mbox_user_mngmt,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_BITERR_START,
 		.policy = biterror_cnt_policy,
 		.doit = pon_mbox_genl_biterr_start,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_BITERR_STOP,
 		.policy = biterror_cnt_policy,
 		.doit = pon_mbox_genl_biterr_stop,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_BITERR_READ,
 		.policy = biterror_cnt_policy,
 		.doit = pon_mbox_genl_biterr_read,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_MODE_READ,
 		.policy = pon_mode_genl_policy,
 		.doit = pon_mbox_genl_mode_read,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_DP_CONFIG,
 		.policy = empty_read_policy,
 		.doit = pon_mbox_genl_dp_config,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_CNT_TWDM_WLCHID,
 		.policy = cnt_twdm_wlchid_genl_policy,
 		.doit = pon_mbox_genl_cnt_twdm_wlchid_set,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_TWDM_LODS_COUNTERS,
 		.policy = counters_genl_policy,
 		.doit = pon_mbox_genl_twdm_lods_counters,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_TWDM_OPTIC_PL_COUNTERS,
 		.policy = counters_genl_policy,
 		.doit = pon_mbox_genl_twdm_optic_pl_counters,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_TWDM_TC_COUNTERS,
 		.policy = counters_genl_policy,
 		.doit = pon_mbox_genl_twdm_tc_counters,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_TC_PLOAM_DS_COUNTERS,
 		.policy = counters_genl_policy,
 		.doit = pon_mbox_genl_tc_ploam_ds_counters,
+		.flags = GENL_CMD_CAP_DO,
 	},
 	{
 		.cmd = PON_MBOX_C_TC_PLOAM_US_COUNTERS,
 		.policy = counters_genl_policy,
 		.doit = pon_mbox_genl_tc_ploam_us_counters,
+		.flags = GENL_CMD_CAP_DO,
 	},
 };
 
 static struct genl_family pon_mbox_genl_family = {
-#if (KERNEL_VERSION(4, 10, 0) > LINUX_VERSION_CODE)
-	.id = GENL_ID_GENERATE,
-#else
 	.mcgrps = pon_mbox_genl_groups,
 	.n_mcgrps = ARRAY_SIZE(pon_mbox_genl_groups),
 #if (KERNEL_VERSION(6, 2, 0) > LINUX_VERSION_CODE)
@@ -2710,7 +2727,6 @@ static struct genl_family pon_mbox_genl_family = {
 #else
 	.split_ops = pon_mbox_genl_ops,
 	.n_split_ops = ARRAY_SIZE(pon_mbox_genl_ops),
-#endif
 #endif
 	.hdrsize = 0,
 	.name = PON_MBOX_FAMILY,
@@ -2894,7 +2910,7 @@ static int pon_mbox_genl_lt_config(struct sk_buff *skb, struct genl_info *info)
 }
 
 static int pon_mbox_genl_serdes_config(struct sk_buff *skb,
-					  struct genl_info *info)
+				       struct genl_info *info)
 {
 	struct pon_mbox *pon = pon_mbox_dev;
 	struct nlattr **attrs = info->attrs;
@@ -3040,7 +3056,7 @@ static int serdes_config_nl_encode(struct sk_buff *skb,
 }
 
 static int pon_mbox_genl_serdes_config_read(struct sk_buff *skb,
-					  struct genl_info *info)
+					    struct genl_info *info)
 {
 	struct pon_mbox *pon = pon_mbox_dev;
 	struct pon_msg_header header = {0};
@@ -3501,10 +3517,9 @@ static void handle_ponip_event_rand_num(void *module, const void *msg,
 	pon_mbox_get_random_bytes(&rand, sizeof(rand));
 
 	ret_fw = pon_mbox_write_msg(pon, (const char *)&rand, sizeof(rand),
-				PONFW_READ, PONFW_RAND_NUM_CMD_ID,
-				PONFW_ACK, 0, seq, NULL,
-				PON_MBOX_MSG_ORIGIN_KERNEL,
-				NULL, NULL, 0);
+				    PONFW_READ, PONFW_RAND_NUM_CMD_ID,
+				    PONFW_ACK, 0, seq, NULL,
+				    PON_MBOX_MSG_ORIGIN_KERNEL, NULL, NULL, 0);
 
 	if (ret_fw < 0) {
 		dev_err(pon->dev, "Sending random numbers to FW failed: %zi\n",
@@ -3809,15 +3824,16 @@ static void pon_mbox_handle_event_by_hashtable(struct pon_mbox_event *event)
 
 static void pon_mbox_handle_event(struct work_struct *work)
 {
-	struct pon_mbox_event *event = container_of(work, struct pon_mbox_event,
-						    work);
+	struct pon_mbox_event *event =
+		container_of(work, struct pon_mbox_event, work);
 #ifdef DEBUG_MBOX_RESPONSE_TIME
 	unsigned int timer;
 
 	timer = jiffies_to_usecs(jiffies - event->debug_jiffies_start);
 	if (time_is_before_jiffies(event->debug_jiffies_start +
 					msecs_to_jiffies(100)))
-		dev_err(event->pon->dev, "Event (0x%x) started more than 100ms later: %d us\n",
+		dev_err(event->pon->dev,
+			"Event (0x%x) started more than 100ms later: %d us\n",
 			event->header.cmd, timer);
 	event->debug_jiffies_start = jiffies;
 #endif
@@ -3827,8 +3843,9 @@ static void pon_mbox_handle_event(struct work_struct *work)
 #ifdef DEBUG_MBOX_RESPONSE_TIME
 	timer = jiffies_to_usecs(jiffies - event->debug_jiffies_start);
 	if (time_is_before_jiffies(event->debug_jiffies_start +
-					msecs_to_jiffies(100)))
-		dev_err(event->pon->dev, "Event (0x%x) took more than 100ms to process: %d us\n",
+				   msecs_to_jiffies(100)))
+		dev_err(event->pon->dev,
+			"Event (0x%x) took more than 100ms to process: %d us\n",
 			event->header.cmd, timer);
 #endif
 	kfree(event);
@@ -3947,7 +3964,9 @@ static int pon_mbox_send_nl_response_encoded(struct pon_mbox *pon,
 		if (ret == -ESRCH)
 			ret = 0;
 		else if (ret)
-			dev_err_ratelimited(pon->dev, "cannot send FW multicast netlink msg: %i\n",
+			dev_err_ratelimited(
+				pon->dev,
+				"cannot send FW multicast netlink msg: %i\n",
 				ret);
 	}
 
@@ -3985,8 +4004,8 @@ static int pon_mbox_user_mngmt(struct sk_buff *skb, struct genl_info *info)
 	}
 
 	if (attrs[PON_MBOX_A_USER_MNGMT_REVOKE_GRANT])
-		revoke_grant = nla_get_u8(
-				attrs[PON_MBOX_A_USER_MNGMT_REVOKE_GRANT]);
+		revoke_grant =
+			nla_get_u8(attrs[PON_MBOX_A_USER_MNGMT_REVOKE_GRANT]);
 
 	if (attrs[PON_MBOX_A_USER_MNGMT_USER])
 		uid_val = nla_get_u32(attrs[PON_MBOX_A_USER_MNGMT_USER]);
@@ -3997,7 +4016,7 @@ static int pon_mbox_user_mngmt(struct sk_buff *skb, struct genl_info *info)
 	if (!revoke_grant) {
 		for (i = 0; i < PON_MBOX_MAX_CMD_USERS; i++) {
 			if (uid_eq(user,
-			    pon_mbox_perm_list[cmd_group].uid_list[i])) {
+				   pon_mbox_perm_list[cmd_group].uid_list[i])) {
 				pon_mbox_perm_list[cmd_group].uid_list[i] =
 					INVALID_UID;
 				ack = PONFW_ACK;
@@ -4011,7 +4030,7 @@ static int pon_mbox_user_mngmt(struct sk_buff *skb, struct genl_info *info)
 	} else {
 		for (i = 0; i < PON_MBOX_MAX_CMD_USERS; i++) {
 			if (uid_eq(pon_mbox_perm_list[cmd_group].uid_list[i],
-			    invalid_uid)) {
+				   invalid_uid)) {
 				pon_mbox_perm_list[cmd_group].uid_list[i] =
 					KUIDT_INIT(uid_val);
 				ack = PONFW_ACK;
@@ -4400,8 +4419,8 @@ static int pon_mbox_read_msg(struct pon_mbox *pon)
 	if (header.src == PONFW_PONIP)
 		pon_mbox_queue_event(pon, &header, msg, plen);
 
-	if (header.src == PONFW_PONIP
-			|| origin == PON_MBOX_MSG_ORIGIN_NETLINK) {
+	if (header.src == PONFW_PONIP ||
+	    origin == PON_MBOX_MSG_ORIGIN_NETLINK) {
 		/* Only send NL response if cmd is available for userspace */
 		if (!pon_mbox_userspace_cmd_check(header.cmd))
 			ret = pon_mbox_send_nl_response(pon, snd_portid,
@@ -4413,9 +4432,8 @@ static int pon_mbox_read_msg(struct pon_mbox *pon)
 
 		if (ret) {
 			CHECK_FOR_NETLINK_RESPONSE_ERR(pon, ret);
-			pon_mbox_write32(pon,
-					PON_MBOX_CMD,
-					PON_MBOX_CMD_R1 | PON_MBOX_CMD_EOM);
+			pon_mbox_write32(pon, PON_MBOX_CMD,
+					 PON_MBOX_CMD_R1 | PON_MBOX_CMD_EOM);
 			return ret;
 		}
 	} else {
@@ -4832,8 +4850,8 @@ init_complete:
 static void pon_mbox_queue_initial_config(struct pon_mbox *pon)
 {
 	int ret;
-	struct work_struct *work = kzalloc(sizeof(struct work_struct),
-					   GFP_KERNEL);
+	struct work_struct *work = kzalloc(sizeof(*work), GFP_KERNEL);
+
 	if (!work)
 		return;
 
@@ -4873,7 +4891,8 @@ static int pon_mbox_download_firmware(struct pon_mbox *pon, u32 boot_stat)
 	const char *fw_filename;
 
 	if (pon->pon_ip_debug_mode) {
-		dev_warn(pon->dev,
+		dev_warn(
+			pon->dev,
 			"FW download was triggered by IRQ in debug mode, ignore it");
 		return 0;
 	}
@@ -4920,8 +4939,7 @@ static int pon_mbox_download_firmware(struct pon_mbox *pon, u32 boot_stat)
 
 	if (checksum != be32_to_cpu(fw_data[(fw_entry->size / 4) - 1])) {
 		dev_err(pon->dev,
-			"firmware file checksum mismatch. File 0x%x, "
-			"calculated: 0x%x\n",
+			"firmware file checksum mismatch. File 0x%x, calculated: 0x%x\n",
 			be32_to_cpu(fw_data[(fw_entry->size / 4) - 1]),
 				    checksum);
 		goto out;
@@ -5051,8 +5069,7 @@ static int pon_mbox_download_firmware(struct pon_mbox *pon, u32 boot_stat)
 
 			if (cpu_to_be32(checksum) != cpu_to_be32(boot_id)) {
 				dev_err(pon->dev,
-					"firmware file checksum mismatch. "
-					"boot_id: 0x%x, calculated: 0x%x\n",
+					"firmware file checksum mismatch. boot_id: 0x%x, calculated: 0x%x\n",
 					boot_id, cpu_to_be32(checksum));
 				goto out;
 			}
@@ -5182,22 +5199,22 @@ static int pon_mbox_register(struct pon_mbox *pon)
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_SPI)
 /**
  * This function is called to read some data from one PON MBOX Host register
  * through SPI. This only supports 32 bit aligned messages. Normally a buffer
  * is 32 bit, only for the messages itself it could be bigger than 32 bit.
  */
-static int pon_mbox_spi_read(struct pon_mbox *pon, int reg,
-			       void *buf, size_t size)
+static int pon_mbox_spi_read(struct pon_mbox *pon, int reg, void *buf,
+			     size_t size)
 {
 	struct spi_device *spi = pon->spi;
 	union pon_mbox_spi_header header;
 	int ret, i;
 	u32 *pbuf = buf;
 
-	if (WARN((size % 4) || !size ||
-		size > sizeof(buf_byte_order_conv),
-		"unsupported size of %zu", size))
+	if (WARN((size % 4) || !size || size > sizeof(buf_byte_order_conv),
+		 "unsupported size of %zu", size))
 		return -EINVAL;
 
 	header.full = 0;
@@ -5212,13 +5229,13 @@ static int pon_mbox_spi_read(struct pon_mbox *pon, int reg,
 				  &buf_byte_order_conv, size);
 
 	if (size == 4) {
-		dev_dbg(pon->dev, "read: reg: %i, size: %zu, spi_header: "
-			"%#010x, data: %#010x\n",
+		dev_dbg(pon->dev,
+			"read: reg: %i, size: %zu, spi_header: %#010x, data: %#010x\n",
 			reg, size, header.full, buf_byte_order_conv[0]);
 	} else {
-		dev_dbg(pon->dev, "read: reg: %i, size: %zu, spi_header: "
-			"%#010x\n",
-			reg, size, header.full);
+		dev_dbg(pon->dev,
+			"read: reg: %i, size: %zu, spi_header: %#010x\n", reg,
+			size, header.full);
 		if (size < 100)
 			print_hex_dump_debug("data: ", DUMP_PREFIX_OFFSET, 16,
 					     1, buf_byte_order_conv, size,
@@ -5236,8 +5253,8 @@ static int pon_mbox_spi_read(struct pon_mbox *pon, int reg,
  * through SPI. This only supports 32 bit aligned messages. Normally a buffer
  * is 32 bit, only for the messages itself it could be bigger than 32 bit.
  */
-static int pon_mbox_spi_write(struct pon_mbox *pon, int reg,
-				const void *buf, size_t size, int flag)
+static int pon_mbox_spi_write(struct pon_mbox *pon, int reg, const void *buf,
+			      size_t size, int flag)
 {
 	struct spi_device *spi = pon->spi;
 	union pon_mbox_spi_header header;
@@ -5246,9 +5263,8 @@ static int pon_mbox_spi_write(struct pon_mbox *pon, int reg,
 	struct spi_transfer header_t, body_t;
 	int i;
 
-	if (WARN((size % 4) || !size ||
-		size > sizeof(buf_byte_order_conv),
-		"unsupported size of %zu", size))
+	if (WARN((size % 4) || !size || size > sizeof(buf_byte_order_conv),
+		 "unsupported size of %zu", size))
 		return -EINVAL;
 
 	header.full = 0;
@@ -5416,6 +5432,7 @@ static void pon_mbox_spi_remove(struct spi_device *spi)
 	(void)_pon_mbox_spi_remove(spi);
 }
 #endif
+#endif /* CONFIG_SPI */
 
 static const struct pon_soc_data prx300_data = {
 	.pon_shell_init = NULL,
@@ -5443,6 +5460,15 @@ static const struct pon_soc_data urx800c_data = {
 	.hw_version_firmware = PONFW_HW_VERSION_VERSION_LGM_C0,
 };
 
+static const struct pon_soc_data tpz_emu_data = {
+	.pon_shell_init = NULL, // the emulator has no pon shell
+	.serdes_basic_init = NULL, // the emulator has no serdes
+	.ref_clk_sel = urx800_ref_clk_sel,
+	.pll5_init = urx800_pll5_init,
+	.serdes_init = NULL, // the emulator has no serdes
+	.hw_version_override = PON_MBOX_HW_VER_TPZ_EMU_TYPE, // we do not have FUSE regs in emulator
+};
+
 static const struct of_device_id pon_mbox_of_match[] = {
 	{ .compatible = "intel,pon_mbox", .data = &prx300_data },
 	{ .compatible = "intel,falcon_mx_pon_mbox", .data = &prx300_data },
@@ -5451,16 +5477,19 @@ static const struct of_device_id pon_mbox_of_match[] = {
 	{ .compatible = "intel,urx800-pon-mbox", .data = &urx800_data },
 	{ .compatible = "mxl,urx800-pon-mbox", .data = &urx800_data },
 	{ .compatible = "mxl,urx800c-pon-mbox", .data = &urx800c_data },
+	{ .compatible = "mxl,tpz-emu-pon-mbox", .data = &tpz_emu_data },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, pon_mbox_of_match);
 
+#if IS_ENABLED(CONFIG_SPI)
 static const struct spi_device_id pon_mbox_spi_ids[] = {
 	{ .name = "pon_mbox" },
 	{ .name = "falcon_mx_pon_mbox" },
 	{ .name = "prx300-pon-mbox" },
 	{ .name = "urx800-pon-mbox" },
 	{ .name = "urx800c-pon-mbox" },
+	{ .name = "tpz-emu-pon-mbox" },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, pon_mbox_spi_ids);
@@ -5474,6 +5503,7 @@ static struct spi_driver pon_mbox_spi_driver = {
 		.of_match_table = pon_mbox_of_match,
 	}
 };
+#endif /* CONFIG_SPI */
 
 /**
  * This function is called to read some data from one PON MBOX Host register
@@ -5520,9 +5550,8 @@ static int pon_mbox_pdev_write(struct pon_mbox *pon, int reg,
 	const u32 *result = buf;
 	int i;
 
-	if (WARN((size % 4) || !size ||
-		size > sizeof(buf_byte_order_conv),
-		"unsupported size of %zu", size))
+	if (WARN((size % 4) || !size || size > sizeof(buf_byte_order_conv),
+		 "unsupported size of %zu", size))
 		return -EINVAL;
 
 	if (flag == PON_WR_FLAG_FWDL) {
@@ -5662,15 +5691,28 @@ static int pon_mbox_pdev_probe(struct platform_device *pdev)
 		}
 	}
 
+	/* pon_app and pon_apb_app are optional for emulated platforms */
 	pon->pon_app =
 		pon_devm_platform_ioremap_resource_byname(pdev, "pon_app");
-	if (IS_ERR(pon->pon_app))
-		return PTR_ERR(pon->pon_app);
+	if (IS_ERR(pon->pon_app)) {
+		if (PTR_ERR(pon->pon_app) == -ENOENT) {
+			dev_info(dev, "pon_app not present (OK for emulation)\n");
+			pon->pon_app = NULL;
+		} else {
+			return PTR_ERR(pon->pon_app);
+		}
+	}
 
 	pon->pon_apb_app =
 		pon_devm_platform_ioremap_resource_byname(pdev, "pon_apb_app");
-	if (IS_ERR(pon->pon_apb_app))
-		return PTR_ERR(pon->pon_apb_app);
+	if (IS_ERR(pon->pon_apb_app)) {
+		if (PTR_ERR(pon->pon_apb_app) == -ENOENT) {
+			dev_info(dev, "pon_apb_app not present (OK for emulation)\n");
+			pon->pon_apb_app = NULL;
+		} else {
+			return PTR_ERR(pon->pon_apb_app);
+		}
+	}
 
 	pon->reset_wanss = devm_reset_control_get_optional_shared(dev, "wanss");
 	if (IS_ERR(pon->reset_wanss)) {
@@ -5846,25 +5888,41 @@ static int pon_mbox_pdev_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_clk_gate_disable;
 
+	/* IRQs are optional for emulated platforms */
 	pon->irqs[0] = pon_mbox_pdev_request_irq(pon, "receiver");
 	if (pon->irqs[0] < 0) {
-		ret = pon->irqs[0];
-		dev_err(dev, "mbox request irq receiver failed\n");
-		goto err_clk_gate_disable;
+		if (pon->irqs[0] == -EINVAL || pon->irqs[0] == -ENOENT) {
+			dev_info(dev, "IRQ receiver not available (OK for emulation)\n");
+			pon->irqs[0] = 0;
+		} else {
+			ret = pon->irqs[0];
+			dev_err(dev, "mbox request irq receiver failed\n");
+			goto err_clk_gate_disable;
+		}
 	}
 
 	pon->irqs[1] = pon_mbox_pdev_request_irq(pon, "transmitter");
 	if (pon->irqs[1] < 0) {
-		ret = pon->irqs[1];
-		dev_err(dev, "mbox request irq transmitter failed\n");
-		goto err_clk_gate_disable;
+		if (pon->irqs[1] == -EINVAL || pon->irqs[1] == -ENOENT) {
+			dev_info(dev, "IRQ transmitter not available (OK for emulation)\n");
+			pon->irqs[1] = 0;
+		} else {
+			ret = pon->irqs[1];
+			dev_err(dev, "mbox request irq transmitter failed\n");
+			goto err_clk_gate_disable;
+		}
 	}
 
 	pon->irqs[2] = pon_mbox_pdev_request_irq(pon, "general");
 	if (pon->irqs[2] < 0) {
-		ret = pon->irqs[2];
-		dev_err(dev, "mbox request irq general failed\n");
-		goto err_clk_gate_disable;
+		if (pon->irqs[2] == -EINVAL || pon->irqs[2] == -ENOENT) {
+			dev_info(dev, "IRQ general not available (OK for emulation)\n");
+			pon->irqs[2] = 0;
+		} else {
+			ret = pon->irqs[2];
+			dev_err(dev, "mbox request irq general failed\n");
+			goto err_clk_gate_disable;
+		}
 	}
 
 	platform_set_drvdata(pdev, pon);
@@ -6000,6 +6058,15 @@ static struct platform_driver pinselect_drv = {
 static int __init pon_mbox_driver_init(void)
 {
 	int ret;
+	enum {
+		REG_NONE,
+		REG_MBOX_CLASS,
+		REG_GENL_FAMILY,
+		REG_PLATFORM_DRV,
+		REG_SPI_DRV
+	};
+	u32 mod_regs = REG_NONE;
+
 
 #if (KERNEL_VERSION(6, 2, 0) > LINUX_VERSION_CODE)
 	pon_mbox_class = class_create(THIS_MODULE, "pon_mbox");
@@ -6011,46 +6078,49 @@ static int __init pon_mbox_driver_init(void)
 		       PTR_ERR(pon_mbox_class));
 		return PTR_ERR(pon_mbox_class);
 	}
+	mod_regs |= BIT(REG_MBOX_CLASS);
 
-#if (KERNEL_VERSION(4, 10, 0) > LINUX_VERSION_CODE)
-	ret = genl_register_family_with_ops_groups(&pon_mbox_genl_family,
-					    pon_mbox_genl_ops,
-					    pon_mbox_genl_groups);
-#else
 	ret = genl_register_family(&pon_mbox_genl_family);
-#endif
 	if (ret) {
 		pr_err("can't register generic netlink");
-		goto out_destroy_class;
+		goto out_destroy;
 	}
+	mod_regs |= BIT(REG_GENL_FAMILY);
 
+#if IS_ENABLED(CONFIG_SPI)
 	ret = spi_register_driver(&pon_mbox_spi_driver);
 	if (ret) {
 		pr_err("can't register spi driver");
-		goto out_unreg_genl;
+		goto out_destroy;
 	}
+	mod_regs |= BIT(REG_SPI_DRV);
+#endif
 	ret = platform_driver_register(&pon_mbox_pdev_driver);
 	if (ret) {
 		pr_err("can't register platform driver");
-		goto out_unreg_spi;
+		goto out_destroy;
 	}
+	mod_regs |= BIT(REG_PLATFORM_DRV);
 
 	ret = platform_driver_register(&pinselect_drv);
 	if (ret) {
 		pr_err("can't register pinselect driver");
-		goto out_unreg_plat;
+		goto out_destroy;
 	}
 
 	return 0;
 
-out_unreg_plat:
-	platform_driver_unregister(&pon_mbox_pdev_driver);
-out_unreg_spi:
-	spi_unregister_driver(&pon_mbox_spi_driver);
-out_unreg_genl:
-	genl_unregister_family(&pon_mbox_genl_family);
-out_destroy_class:
-	class_destroy(pon_mbox_class);
+out_destroy:
+	if (mod_regs & BIT(REG_PLATFORM_DRV))
+		platform_driver_unregister(&pon_mbox_pdev_driver);
+#if IS_ENABLED(CONFIG_SPI)
+	if (mod_regs & BIT(REG_SPI_DRV))
+		spi_unregister_driver(&pon_mbox_spi_driver);
+#endif
+	if (mod_regs & BIT(REG_GENL_FAMILY))
+		genl_unregister_family(&pon_mbox_genl_family);
+	if (mod_regs & BIT(REG_MBOX_CLASS))
+		class_destroy(pon_mbox_class);
 
 	return ret;
 }
@@ -6060,8 +6130,9 @@ static void __exit pon_mbox_driver_exit(void)
 {
 	platform_driver_unregister(&pinselect_drv);
 	platform_driver_unregister(&pon_mbox_pdev_driver);
+#if IS_ENABLED(CONFIG_SPI)
 	spi_unregister_driver(&pon_mbox_spi_driver);
-
+#endif
 	genl_unregister_family(&pon_mbox_genl_family);
 
 	class_destroy(pon_mbox_class);
@@ -6076,10 +6147,12 @@ MODULE_FIRMWARE(PON_MBOX_FW_GPON_NAME_B);
 MODULE_FIRMWARE(PON_MBOX_FW_GPON_NAME_URX_A);
 MODULE_FIRMWARE(PON_MBOX_FW_GPON_NAME_URX_B);
 MODULE_FIRMWARE(PON_MBOX_FW_GPON_NAME_URX_C);
+MODULE_FIRMWARE(PON_MBOX_FW_GPON_NAME_TPZ);
 MODULE_FIRMWARE(PON_MBOX_FW_XPON_NAME_A);
 MODULE_FIRMWARE(PON_MBOX_FW_XPON_NAME_B);
 MODULE_FIRMWARE(PON_MBOX_FW_XPON_NAME_URX_A);
 MODULE_FIRMWARE(PON_MBOX_FW_XPON_NAME_URX_B);
 MODULE_FIRMWARE(PON_MBOX_FW_XPON_NAME_URX_C);
+MODULE_FIRMWARE(PON_MBOX_FW_XPON_NAME_TPZ);
 
 /** @} */
