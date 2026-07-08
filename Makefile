@@ -1,5 +1,5 @@
 PACKAGE:=pon_mbox_drv
-PACKAGE_VERSION:=1.28.1
+PACKAGE_VERSION:=1.28.2
 
 # Set M to current directory, when not called via kernel build system
 ifeq ($(M),)
@@ -13,7 +13,7 @@ EXTRA_VERSION:=$(shell git -C $(M) rev-list HEAD "^$(latest_tag)" --count 2>/dev
 ifneq ($(shell git -C $(M) diff-index --quiet HEAD || echo dirty),)
 EXTRA_VERSION:=$(EXTRA_VERSION)-dirty
 else
-# The '-g' prefix before the git hash is a common convention (e.g., 1.28.1-5-gabcdef1).
+# The '-g' prefix before the git hash is a common convention (e.g., 1.28.2-5-gabcdef1).
 # Ensure all downstream consumers expect this format.
 EXTRA_VERSION:=$(EXTRA_VERSION)-g$(shell git -C $(M) rev-parse --short=7 HEAD)
 endif

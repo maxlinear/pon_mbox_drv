@@ -1,5 +1,10 @@
 NEXT VERSION
 
+v1.28.2 2026.07.07
+
+- UGW_SW-98239: VANI interface generates non-RFC4291 compliant IPv6 link-local address
+  + dev_id set is removed so that VANI generates RFC4291 compliant IPv6 link-local address
+
 v1.28.1 2026.02.24
 
 - PONRTSYS-15272: mailbox driver for emulation (part2)

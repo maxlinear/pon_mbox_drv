@@ -1044,7 +1044,6 @@ static int vuni_of_iface(struct vuni_hw *hw, struct device_node *iface,
 		return -ENODEV;
 	}
 
-	hw->devs[hw->num_devs]->dev_id = dp_port_id;
 	priv->dp_port_id = dp_port_id;
 	if (priv->extra_subif >= 0)
 		dev_data.max_ctp = extra_subif_param + priv->num_ip_host + 1;
